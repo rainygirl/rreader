@@ -8,13 +8,14 @@ if sys.version[0] == "2":
 
 requires = [
     "Pillow==9.0.0",
+    "wcwidth==0.1.8",
     "asciimatics==1.11.0",
     "feedparser>=5.2.1",
 ]
 
 setup(
     name="rreader",
-    version="1.0",
+    version="1.0a",
     description="RSS reader client for CLI, spinned off from rterm",
     long_description=open("./README.rst", "r").read(),
     classifiers=[
