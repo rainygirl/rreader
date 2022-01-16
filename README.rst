@@ -14,7 +14,7 @@ rReader該庫支持中文RSS。
 Screenshot
 ----------
 
-.. image:: https://raw.githubusercontent.com/rainygirl/rterm/master/screenshot.gif
+.. image:: https://user-images.githubusercontent.com/1021138/149663475-fa39c500-1c61-4d4c-93a2-d836b898edf8.gif
 
 ---------------
 Getting Started
