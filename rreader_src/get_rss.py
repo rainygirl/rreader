@@ -11,7 +11,7 @@ from .config import TIMEZONE
 
 
 def do(target_category=None, log=False):
-    def getFeedFromRSS(category, urls, log=False):
+    def getFeedFromRSS(category, urls, show_author=False, log=False):
 
         rslt = {}
 
@@ -41,7 +41,7 @@ def do(target_category=None, log=False):
 
                 entries = {
                     "id": ts,
-                    "sourceName": source,
+                    "sourceName": source if not show_author else feed.author,
                     "pubDate": pubDate,
                     "timestamp": ts,
                     "url": feed.link,
@@ -66,10 +66,10 @@ def do(target_category=None, log=False):
         RSS = json.load(fp)
 
     if target_category:
-        return getFeedFromRSS(target_category, RSS[target_category]["feeds"], log)
+        return getFeedFromRSS(target_category, RSS[target_category]["feeds"], show_author=RSS[target_category].get("show_author", False), log=log)
 
     for category, d in RSS.items():
-        getFeedFromRSS(category, d["feeds"], log)
+        getFeedFromRSS(category, d["feeds"], show_author=d.get("show_author", False), log=log)
 
 
 if __name__ == "__main__":

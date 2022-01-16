@@ -36,5 +36,14 @@
             "TechCrunch": "http://feeds.feedburner.com/TechCrunch/",
             "New York Times": "https://www.nytimes.com/svc/collections/v1/publish/https://www.nytimes.com/section/technology/rss.xml"
         }
+    },
+    "reddit": {
+        "title": "reddit",
+        "feeds": {
+            "Frontpage": "https://www.reddit.com/.rss",
+            "News": "https://www.reddit.com/r/news+worldnews.rss",
+            "Tech": "https://www.reddit.com/r/technology+technews.rss"
+        },
+        "show_author": true
     }
 }
