@@ -3,11 +3,16 @@ rReader
 =======
 
 rReader is RSS reader client for CLI(Command Line Interface), spinned off from `rterm <https://github.com/rainygirl/rterm>`_.
+
 rReader requires Python version 3.7 and above.
 
+
 rReader는 한국어 RSS 피드를 지원합니다.
+
 rReaderは日本語RSSフィードをサポートしています。
+
 rReader该库支持中文RSS。
+
 rReader該庫支持中文RSS。
 
 ----------
