@@ -7,7 +7,7 @@ if sys.version[0] == "2":
     sys.exit("Use Python 3")
 
 requires = [
-    "Pillow==9.0.0",
+    "Pillow>=9.0.1",
     "wcwidth==0.1.8",
     "asciimatics==1.11.0",
     "feedparser>=5.2.1",
@@ -15,7 +15,7 @@ requires = [
 
 setup(
     name="rreader",
-    version="1.1",
+    version="1.1.1",
     description="RSS reader client for CLI, spinned off from rterm",
     long_description=open("./README.rst", "r").read(),
     classifiers=[
