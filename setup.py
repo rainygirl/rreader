@@ -15,7 +15,7 @@ requires = [
 
 setup(
     name="rreader",
-    version="1.1.1",
+    version="1.1.2",
     description="RSS reader client for CLI, spinned off from rterm",
     long_description=open("./README.rst", "r").read(),
     classifiers=[
