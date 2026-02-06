@@ -40,9 +40,9 @@
     "reddit": {
         "title": "reddit",
         "feeds": {
-            "Frontpage": "https://www.reddit.com/.rss",
-            "News": "https://www.reddit.com/r/news+worldnews.rss",
-            "Tech": "https://www.reddit.com/r/technology+technews.rss"
+            "Frontpage": "https://www.reddit.com/r/feedly.rss",
+            "News": "https://www.reddit.com/r/news/.rss",
+            "Tech": "https://www.reddit.com/r/tech/.rss"
         },
         "show_author": true
     }

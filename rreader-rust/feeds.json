@@ -9,7 +9,6 @@
             "Al Jazeera": "https://www.aljazeera.com/xml/rss/all.xml",
             "CNN": "http://rss.cnn.com/rss/edition_world.rss",
             "The Guardian": "https://www.theguardian.com/world/rss",
-            "Washington Post": "http://feeds.washingtonpost.com/rss/world",
             "SCMP": "https://www.scmp.com/rss/91/feed"
         }
     },
@@ -32,5 +31,14 @@
             "TechCrunch": "http://feeds.feedburner.com/TechCrunch/",
             "New York Times": "https://www.nytimes.com/svc/collections/v1/publish/https://www.nytimes.com/section/technology/rss.xml"
         }
+    },
+    "reddit": {
+        "title": "reddit",
+        "feeds": {
+            "Frontpage": "https://www.reddit.com/r/feedly.rss",
+            "News": "https://www.reddit.com/r/news/.rss",
+            "Tech": "https://www.reddit.com/r/tech/.rss"
+        },
+        "show_author": true
     }
 }
