@@ -72,6 +72,21 @@ python -m build
 # - rreader-x.x.x-py3-none-any.whl (wheel)
 ```
 
+#### Cross-compile for i386 (32-bit)
+
+Uses [PyInstaller](https://pyinstaller.org/) inside an Alpine Linux (musl) Docker container to produce a standalone i386 binary with no glibc dependency.
+
+Requires [Docker](https://www.docker.com/).
+
+```bash
+cd rreader-python
+
+# Build static binary for i386
+./build-i386.sh
+
+# Binary location: rreader-i386
+```
+
 ### Rust
 
 ```bash
