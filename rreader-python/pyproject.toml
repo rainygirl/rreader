@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rreader"
+version = "1.2.0"
+description = "RSS reader client for CLI, spinned off from rterm"
+license = {text = "MIT License"}
+authors = [
+    {name = "Lee JunHaeng", email = "rainygirl@gmail.com"}
+]
+keywords = ["RSS", "CLI", "command line", "terminal"]
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "Pillow>=9.0.1",
+    "wcwidth>=0.2.0",
+    "asciimatics>=1.14.0",
+    "feedparser>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/rainygirl/rreader"
+Repository = "https://github.com/rainygirl/rreader"
+Issues = "https://github.com/rainygirl/rreader/issues"
+
+[project.scripts]
+rr = "rreader.run:do"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rreader = ["*.json"]
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

@@ -23,7 +23,8 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
 fi
 
 echo "Building for i686-unknown-linux-gnu..."
-cargo build --release --target i686-unknown-linux-gnu
+cross build --release --target i686-unknown-linux-musl
+  
 
 echo ""
 echo "Build complete!"
