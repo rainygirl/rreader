@@ -72,6 +72,24 @@ python -m build
 # - rreader-x.x.x-py3-none-any.whl (wheel)
 ```
 
+#### Build Standalone Executable
+
+Uses [PyInstaller](https://pyinstaller.org/) to create a single executable binary.
+
+```bash
+cd rreader-python
+
+# Install PyInstaller
+pip install pyinstaller
+
+# Build standalone executable
+pyinstaller --onefile --strip --name rreader \
+  --add-data "src/rreader/feeds.json:rreader" \
+  src/rreader/run.py
+
+# Binary location: dist/rreader
+```
+
 #### Cross-compile for i386 (32-bit)
 
 Uses [PyInstaller](https://pyinstaller.org/) inside an Alpine Linux (musl) Docker container to produce a standalone i386 binary with no glibc dependency.

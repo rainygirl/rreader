@@ -23,6 +23,10 @@ docker run --rm -v "$(pwd)":/app -w /app --platform linux/386 alpine:3.19 sh -c 
     --strip \
     --name rreader \
     --add-data "src/rreader/feeds.json:rreader" \
+    --collect-all asciimatics \
+    --hidden-import feedparser \
+    --hidden-import wcwidth \
+    --hidden-import PIL \
     src/rreader/run.py &&
   cp dist/rreader /app/rreader-i386
 '

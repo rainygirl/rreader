@@ -6,8 +6,12 @@ import shutil
 import sys
 import time
 
-from .common import p, FEEDS_FILE_NAME
-from .config import TIMEZONE
+try:
+    from .common import p, FEEDS_FILE_NAME
+    from .config import TIMEZONE
+except ImportError:
+    from rreader.common import p, FEEDS_FILE_NAME
+    from rreader.config import TIMEZONE
 
 
 def do(target_category=None, log=False):

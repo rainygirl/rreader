@@ -14,8 +14,12 @@ from asciimatics.effects import Print
 from asciimatics.scene import Scene
 from asciimatics.renderers import ColourImageFile, SpeechBubble
 
-from .common import p, FEEDS_FILE_NAME
-from .get_rss import do as get_feeds_from_rss
+try:
+    from .common import p, FEEDS_FILE_NAME
+    from .get_rss import do as get_feeds_from_rss
+except ImportError:
+    from rreader.common import p, FEEDS_FILE_NAME
+    from rreader.get_rss import do as get_feeds_from_rss
 
 
 KEY = {
