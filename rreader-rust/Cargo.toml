@@ -23,6 +23,7 @@ ratatui = "0.26"
 dirs = "5.0"
 anyhow = "1.0"
 open = "5.0"
+unicode-width = "0.1"
 
 [profile.release]
 opt-level = "s"

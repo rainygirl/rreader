@@ -1,16 +1,14 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local, TimeZone, Utc};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs},
+    buffer::Buffer,
+    style::{Color, Style},
     Frame, Terminal,
 };
 use rss::Channel;
@@ -21,8 +19,15 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use unicode_width::UnicodeWidthChar;
 
-const REFRESH_INTERVAL: u64 = 120; // seconds
+const REFRESH_INTERVAL: u64 = 120;
+const MARQUEE_SPEED: f64 = 20.0;
+const MARQUEE_SPEED_RETURN: f64 = 400.0;
+const MARQUEE_DELAY: i32 = 40;
+const MARQUEE_DELAY_RETURN: i32 = 120;
+const SOURCE_COL: u16 = 1;
+const TITLE_COL: u16 = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FeedEntry {
@@ -57,7 +62,70 @@ struct LoadingState {
     is_loading: bool,
     current: usize,
     total: usize,
-    category: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MarqueeDirection {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum InputMode {
+    Normal,
+    NumberJump,
+}
+
+#[derive(Debug, Clone)]
+struct ColorScheme {
+    default: Color,
+    number: Color,
+    numberselected: Color,
+    source: Color,
+    time: Color,
+    selected_bg: Color,
+    alertfg: Color,
+    alertbg: Color,
+    categoryfg: Color,
+    categorybg: Color,
+    categoryfg_s: Color,
+    categorybg_s: Color,
+}
+
+impl ColorScheme {
+    fn new_16() -> Self {
+        ColorScheme {
+            default: Color::White,
+            number: Color::White,
+            numberselected: Color::White,
+            source: Color::Yellow,
+            time: Color::DarkGray,
+            selected_bg: Color::White,
+            alertfg: Color::White,
+            alertbg: Color::Blue,
+            categoryfg: Color::Yellow,
+            categorybg: Color::Black,
+            categoryfg_s: Color::Black,
+            categorybg_s: Color::Yellow,
+        }
+    }
+
+    fn new_256() -> Self {
+        ColorScheme {
+            default: Color::Indexed(7),
+            number: Color::Indexed(8),
+            numberselected: Color::Indexed(15),
+            source: Color::Indexed(2),
+            time: Color::Indexed(8),
+            selected_bg: Color::Indexed(15),
+            alertfg: Color::Indexed(15),
+            alertbg: Color::Indexed(12),
+            categoryfg: Color::Indexed(223),
+            categorybg: Color::Indexed(235),
+            categoryfg_s: Color::Indexed(235),
+            categorybg_s: Color::Indexed(223),
+        }
+    }
 }
 
 struct App {
@@ -66,11 +134,25 @@ struct App {
     feeds_config: FeedsConfig,
     current_category: usize,
     entries: HashMap<String, Vec<FeedEntry>>,
-    list_state: ListState,
+    selected: Option<usize>,
     data_path: PathBuf,
     last_refresh: Instant,
-    error_message: Option<String>,
     loading_state: Arc<Mutex<LoadingState>>,
+    // Marquee state
+    marquee_shift: i32,
+    marquee_direction: MarqueeDirection,
+    marquee_tick_count: u64,
+    // Input mode
+    input_mode: InputMode,
+    input_number: String,
+    pre_input_selected: Option<usize>,
+    // Help
+    show_help: bool,
+    // Colors
+    colors: ColorScheme,
+    // Terminal dimensions (cached per frame)
+    terminal_width: u16,
+    terminal_height: u16,
 }
 
 impl App {
@@ -83,7 +165,6 @@ impl App {
 
         let feeds_path = data_path.join("feeds.json");
 
-        // Copy default feeds.json if not exists
         if !feeds_path.exists() {
             let default_feeds = include_str!("../feeds.json");
             fs::write(&feeds_path, default_feeds)?;
@@ -93,22 +174,27 @@ impl App {
         let feeds_config: FeedsConfig = serde_json::from_str(&feeds_content)?;
 
         let mut categories: Vec<String> = feeds_config.keys().cloned().collect();
-        categories.sort(); // Consistent ordering
+        categories.sort();
 
         let category_titles: HashMap<String, String> = feeds_config
             .iter()
             .map(|(k, v)| (k.clone(), v.title.clone()))
             .collect();
 
-        let mut list_state = ListState::default();
-        list_state.select(Some(0));
-
         let loading_state = Arc::new(Mutex::new(LoadingState {
             is_loading: false,
             current: 0,
             total: 0,
-            category: String::new(),
         }));
+
+        let colors = if std::env::var("TERM")
+            .unwrap_or_default()
+            .contains("256")
+        {
+            ColorScheme::new_256()
+        } else {
+            ColorScheme::new_16()
+        };
 
         Ok(App {
             categories,
@@ -116,11 +202,20 @@ impl App {
             feeds_config,
             current_category: 0,
             entries: HashMap::new(),
-            list_state,
+            selected: None,
             data_path,
             last_refresh: Instant::now() - Duration::from_secs(REFRESH_INTERVAL + 1),
-            error_message: None,
             loading_state,
+            marquee_shift: 0,
+            marquee_direction: MarqueeDirection::Left,
+            marquee_tick_count: 0,
+            input_mode: InputMode::Normal,
+            input_number: String::new(),
+            pre_input_selected: None,
+            show_help: false,
+            colors,
+            terminal_width: 80,
+            terminal_height: 24,
         })
     }
 
@@ -128,11 +223,17 @@ impl App {
         &self.categories[self.current_category]
     }
 
-    fn current_entries(&self) -> Vec<&FeedEntry> {
+    fn current_entries(&self) -> &[FeedEntry] {
         self.entries
             .get(self.current_category_name())
-            .map(|e| e.iter().collect())
-            .unwrap_or_default()
+            .map(|e| e.as_slice())
+            .unwrap_or(&[])
+    }
+
+    fn row_limit(&self) -> usize {
+        let max_rows = (self.terminal_height as usize).saturating_sub(2);
+        let entry_count = self.current_entries().len();
+        entry_count.min(max_rows).min(999)
     }
 
     fn load_cached_feed(&self, category: &str) -> Option<CachedFeed> {
@@ -153,27 +254,28 @@ impl App {
     }
 
     fn fetch_feeds(&mut self, category: &str) -> Result<Vec<FeedEntry>> {
-        let config = self.feeds_config.get(category).context("Category not found")?;
+        let config = self
+            .feeds_config
+            .get(category)
+            .context("Category not found")?;
         let mut all_entries: HashMap<i64, FeedEntry> = HashMap::new();
-        let mut errors: Vec<String> = Vec::new();
 
-        let feeds: Vec<(String, String)> = config.feeds.iter()
+        let feeds: Vec<(String, String)> = config
+            .feeds
+            .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         let total = feeds.len();
         let show_author = config.show_author;
 
-        // Update loading state
         {
             let mut state = self.loading_state.lock().unwrap();
             state.is_loading = true;
             state.current = 0;
             state.total = total;
-            state.category = category.to_string();
         }
 
         for (idx, (source_name, url)) in feeds.iter().enumerate() {
-            // Update progress
             {
                 let mut state = self.loading_state.lock().unwrap();
                 state.current = idx + 1;
@@ -185,21 +287,13 @@ impl App {
                         all_entries.insert(entry.id, entry);
                     }
                 }
-                Err(e) => {
-                    errors.push(format!("{}: {}", source_name, e));
-                }
+                Err(_) => {}
             }
         }
 
-        // Done loading
         {
             let mut state = self.loading_state.lock().unwrap();
             state.is_loading = false;
-        }
-
-        // Show error only if ALL feeds failed
-        if !errors.is_empty() && all_entries.is_empty() {
-            self.error_message = Some(errors.join("\n"));
         }
 
         let mut entries: Vec<FeedEntry> = all_entries.into_values().collect();
@@ -216,9 +310,13 @@ impl App {
         Ok(entries)
     }
 
-    fn fetch_single_feed(source_name: &str, url: &str, show_author: bool) -> Result<Vec<FeedEntry>> {
+    fn fetch_single_feed(
+        source_name: &str,
+        url: &str,
+        show_author: bool,
+    ) -> Result<Vec<FeedEntry>> {
         let response = ureq::get(url)
-            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .timeout(Duration::from_secs(15))
             .call()?;
 
@@ -246,10 +344,12 @@ impl App {
                 local_date.format("%b %d, %H:%M").to_string()
             };
 
-            // Get author if show_author is enabled
             let display_name = if show_author {
                 item.author()
-                    .or_else(|| item.dublin_core_ext().and_then(|dc| dc.creators().first().map(|s| s.as_str())))
+                    .or_else(|| {
+                        item.dublin_core_ext()
+                            .and_then(|dc| dc.creators().first().map(|s| s.as_str()))
+                    })
                     .unwrap_or(source_name)
                     .to_string()
             } else {
@@ -271,37 +371,31 @@ impl App {
 
     fn refresh_current_category(&mut self) {
         let category = self.current_category_name().to_string();
-
         match self.fetch_feeds(&category) {
             Ok(entries) => {
-                self.entries.insert(category.clone(), entries);
+                self.entries.insert(category, entries);
                 self.last_refresh = Instant::now();
             }
-            Err(e) => {
-                self.error_message = Some(format!("Error: {}", e));
-            }
+            Err(_) => {}
         }
     }
 
     fn load_or_refresh(&mut self) {
         let category = self.current_category_name().to_string();
-
-        // Try loading from cache first
         if let Some(cached) = self.load_cached_feed(&category) {
             let age = Utc::now().timestamp() - cached.created_at;
             if age < REFRESH_INTERVAL as i64 && !cached.entries.is_empty() {
-                self.entries.insert(category.clone(), cached.entries);
+                self.entries.insert(category, cached.entries);
                 return;
             }
         }
-
-        // Fetch fresh data
         self.refresh_current_category();
     }
 
     fn next_category(&mut self) {
         self.current_category = (self.current_category + 1) % self.categories.len();
-        self.list_state.select(Some(0));
+        self.selected = None;
+        self.reset_marquee();
         self.load_or_refresh();
     }
 
@@ -311,298 +405,693 @@ impl App {
         } else {
             self.current_category -= 1;
         }
-        self.list_state.select(Some(0));
+        self.selected = None;
+        self.reset_marquee();
         self.load_or_refresh();
     }
 
-    fn next_item(&mut self) {
-        let entries = self.current_entries();
-        if entries.is_empty() {
-            return;
+    fn select_category(&mut self, idx: usize) {
+        if idx < self.categories.len() {
+            self.current_category = idx;
+            self.selected = None;
+            self.reset_marquee();
+            self.load_or_refresh();
         }
-        let i = match self.list_state.selected() {
-            Some(i) => (i + 1) % entries.len(),
-            None => 0,
-        };
-        self.list_state.select(Some(i));
     }
 
-    fn prev_item(&mut self) {
-        let entries = self.current_entries();
-        if entries.is_empty() {
+    fn move_down(&mut self) {
+        self.reset_marquee();
+        let limit = self.row_limit();
+        if limit == 0 {
             return;
         }
-        let i = match self.list_state.selected() {
+        self.selected = Some(match self.selected {
+            Some(i) => {
+                if i + 1 >= limit {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        });
+    }
+
+    fn move_up(&mut self) {
+        self.reset_marquee();
+        let limit = self.row_limit();
+        if limit == 0 {
+            return;
+        }
+        self.selected = Some(match self.selected {
             Some(i) => {
                 if i == 0 {
-                    entries.len() - 1
+                    limit - 1
                 } else {
                     i - 1
                 }
             }
+            None => limit - 1,
+        });
+    }
+
+    fn page_down(&mut self) {
+        self.reset_marquee();
+        let limit = self.row_limit();
+        if limit == 0 {
+            return;
+        }
+        self.selected = Some(match self.selected {
+            Some(i) => {
+                if i + 10 >= limit {
+                    0
+                } else {
+                    i + 10
+                }
+            }
             None => 0,
-        };
-        self.list_state.select(Some(i));
+        });
+    }
+
+    fn page_up(&mut self) {
+        self.reset_marquee();
+        let limit = self.row_limit();
+        if limit == 0 {
+            return;
+        }
+        self.selected = Some(match self.selected {
+            Some(i) => {
+                if (i as i32 - 10) < 0 {
+                    limit - 1
+                } else {
+                    i - 10
+                }
+            }
+            None => limit - 1,
+        });
+    }
+
+    fn go_top(&mut self) {
+        self.reset_marquee();
+        if self.row_limit() > 0 {
+            self.selected = Some(0);
+        }
+    }
+
+    fn go_bottom(&mut self) {
+        self.reset_marquee();
+        let limit = self.row_limit();
+        if limit > 0 {
+            self.selected = Some(limit - 1);
+        }
+    }
+
+    fn deselect(&mut self) {
+        self.reset_marquee();
+        self.selected = None;
     }
 
     fn open_selected(&self) {
-        let entries = self.current_entries();
-        if let Some(i) = self.list_state.selected() {
+        if let Some(i) = self.selected {
+            let entries = self.current_entries();
             if let Some(entry) = entries.get(i) {
                 let _ = open::that(&entry.url);
             }
         }
     }
 
-    fn page_down(&mut self) {
-        let entries = self.current_entries();
-        if entries.is_empty() {
-            return;
+    fn reset_marquee(&mut self) {
+        self.marquee_shift = 0;
+        self.marquee_direction = MarqueeDirection::Left;
+    }
+
+    fn enter_number_mode(&mut self) {
+        self.pre_input_selected = self.selected;
+        self.input_mode = InputMode::NumberJump;
+        self.input_number.clear();
+        self.selected = None;
+        self.reset_marquee();
+    }
+
+    fn exit_number_mode(&mut self, apply: bool) {
+        if apply && !self.input_number.is_empty() {
+            if let Ok(n) = self.input_number.parse::<usize>() {
+                let limit = self.row_limit();
+                if n >= 1 && n <= limit {
+                    self.selected = Some(n - 1);
+                } else {
+                    self.selected = self.pre_input_selected;
+                }
+            } else {
+                self.selected = self.pre_input_selected;
+            }
+        } else {
+            self.selected = self.pre_input_selected;
         }
-        let i = match self.list_state.selected() {
-            Some(i) => (i + 10).min(entries.len() - 1),
-            None => 0,
-        };
-        self.list_state.select(Some(i));
-    }
-
-    fn page_up(&mut self) {
-        let i = match self.list_state.selected() {
-            Some(i) => i.saturating_sub(10),
-            None => 0,
-        };
-        self.list_state.select(Some(i));
-    }
-
-    fn dismiss_error(&mut self) {
-        self.error_message = None;
-    }
-
-    fn has_error(&self) -> bool {
-        self.error_message.is_some()
+        self.input_mode = InputMode::Normal;
+        self.input_number.clear();
+        self.pre_input_selected = None;
+        self.reset_marquee();
     }
 
     fn get_loading_state(&self) -> LoadingState {
         self.loading_state.lock().unwrap().clone()
     }
+
+    fn tick_marquee(&mut self) {
+        if self.selected.is_none() || self.input_mode == InputMode::NumberJump {
+            return;
+        }
+
+        let speed = if self.marquee_direction == MarqueeDirection::Left {
+            MARQUEE_SPEED
+        } else {
+            MARQUEE_SPEED_RETURN
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let current_tick = (now * speed) as u64;
+
+        if current_tick != self.marquee_tick_count {
+            self.marquee_tick_count = current_tick;
+            match self.marquee_direction {
+                MarqueeDirection::Left => {
+                    self.marquee_shift += 1;
+                }
+                MarqueeDirection::Right => {
+                    self.marquee_shift -= 1;
+                    if self.marquee_shift <= 0 {
+                        self.marquee_shift = 0;
+                        self.marquee_direction = MarqueeDirection::Left;
+                    }
+                }
+            }
+        }
+    }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
+// ── Unicode-width helpers ──
 
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
+fn display_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+        .sum()
+}
+
+fn truncate_to_width(s: &str, max: usize) -> String {
+    let mut w = 0;
+    let mut result = String::new();
+    for c in s.chars() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        if w + cw > max {
+            break;
+        }
+        result.push(c);
+        w += cw;
+    }
+    // Pad to exact width
+    while w < max {
+        result.push(' ');
+        w += 1;
+    }
+    result
+}
+
+fn slice_text_marquee(
+    s: &str,
+    max_width: usize,
+    shift: i32,
+    marquee_direction: &mut MarqueeDirection,
+) -> String {
+    let string_length = display_width(s) as i32;
+    let max_w = max_width as i32;
+
+    if string_length <= max_w {
+        return truncate_to_width(s, max_width);
+    }
+
+    // Check direction flip conditions
+    let effective_shift;
+    if string_length - shift + MARQUEE_DELAY_RETURN < max_w || shift == -1 {
+        *marquee_direction = if *marquee_direction == MarqueeDirection::Left {
+            MarqueeDirection::Right
+        } else {
+            MarqueeDirection::Left
+        };
+    }
+
+    if *marquee_direction == MarqueeDirection::Left {
+        if shift < MARQUEE_DELAY {
+            effective_shift = 0;
+        } else {
+            effective_shift = shift - MARQUEE_DELAY;
+        }
+    } else {
+        effective_shift = shift;
+    }
+
+    // Clamp shift so we don't scroll too far
+    let clamped_shift = if string_length - effective_shift + max_w / 4 < max_w {
+        string_length - max_w + max_w / 4
+    } else {
+        effective_shift
+    };
+
+    // Build result by skipping `clamped_shift` display-width units
+    let mut result = String::new();
+    let mut w = 0; // accumulated display width
+    let mut out_w = 0;
+
+    for c in s.chars() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0) as i32;
+        w += cw;
+
+        if w <= clamped_shift {
+            // Before visible window - but handle double-width boundary
+            if w == clamped_shift && cw == 2 {
+                // We're exactly at a double-width char boundary, skip
+            }
+            continue;
+        }
+
+        // If we skipped into the middle of a double-width char
+        if w - cw < clamped_shift && cw == 2 {
+            result.push(' ');
+            out_w += 1;
+        }
+
+        result.push(c);
+        out_w += cw;
+
+        if out_w >= max_w {
+            break;
+        }
+    }
+
+    // Pad if needed
+    while out_w < max_w {
+        result.push(' ');
+        out_w += 1;
+    }
+
+    result
+}
+
+// ── Rendering ──
+
+fn render_category_bar(f: &mut Frame, app: &App) {
+    let frame_width = f.size().width;
+    let width = frame_width as usize;
+
+    // Fill entire row with dots in categorybg color
+    let dots: String = ".".repeat(width);
+    let dot_style = Style::default()
+        .fg(app.colors.categorybg)
+        .bg(app.colors.categorybg);
+
+    let buf = f.buffer_mut();
+    buf.set_string(0, 0, &dots, dot_style);
+
+    // Draw each category label
+    let mut x: u16 = 1;
+    for (idx, cat_key) in app.categories.iter().enumerate() {
+        let title = app.category_titles.get(cat_key).unwrap_or(cat_key);
+        let label = format!(" {} ", title);
+        let label_len = label.len() as u16;
+
+        let style = if idx == app.current_category {
+            Style::default()
+                .fg(app.colors.categoryfg_s)
+                .bg(app.colors.categorybg_s)
+        } else {
+            Style::default()
+                .fg(app.colors.categoryfg)
+                .bg(app.colors.categorybg)
+        };
+
+        if x + label_len <= frame_width {
+            buf.set_string(x, 0, &label, style);
+        }
+        x += label_len + 2;
+    }
+}
+
+fn render_alert(f: &mut Frame, app: &App, text: &str) {
+    let space = 3;
+    let display_text = format!("{}{}{}", " ".repeat(space), text, " ".repeat(space));
+    let text_len = display_text.len() as u16;
+    let x = f.size().width.saturating_sub(text_len);
+
+    let style = Style::default()
+        .fg(app.colors.alertfg)
+        .bg(app.colors.alertbg);
+
+    f.buffer_mut().set_string(x, 0, &display_text, style);
+}
+
+fn render_entries(f: &mut Frame, app: &mut App) {
+    let width = f.size().width;
+    let height = f.size().height;
+
+    // Clone entries data we need to avoid borrow conflicts
+    let entry_data: Vec<(String, String, String)> = app
+        .current_entries()
+        .iter()
+        .map(|e| (e.source_name.clone(), e.title.clone(), e.pub_date.clone()))
+        .collect();
+
+    let row_limit = app.row_limit();
+    let is_number_mode = app.input_mode == InputMode::NumberJump;
+    let selected = app.selected;
+    let colors = app.colors.clone();
+    let input_number = app.input_number.clone();
+    let marquee_shift = app.marquee_shift;
+
+    let buf = f.buffer_mut();
+
+    for i in 0..row_limit {
+        let row = (i + 1) as u16;
+        if row >= height {
+            break;
+        }
+
+        let is_selected = selected == Some(i) && !is_number_mode;
+
+        // Fill background
+        let bg = if is_selected {
+            colors.selected_bg
+        } else {
+            Color::Black
+        };
+        let fill_style = Style::default().fg(bg).bg(bg);
+        let spaces = " ".repeat(width as usize);
+        buf.set_string(0, row, &spaces, fill_style);
+
+        if i >= entry_data.len() {
+            continue;
+        }
+        let (ref source_name, ref title, ref pub_date) = entry_data[i];
+
+        // Number column in number mode
+        if is_number_mode {
+            let num_str = format!("{:>3}", i + 1);
+            let num_fg = if !input_number.is_empty() {
+                if let Ok(n) = input_number.parse::<usize>() {
+                    if n == i + 1 {
+                        colors.numberselected
+                    } else {
+                        colors.number
+                    }
+                } else {
+                    colors.number
+                }
+            } else {
+                colors.number
+            };
+            let num_style = Style::default().fg(num_fg).bg(Color::Black);
+            buf.set_string(1, row, &num_str, num_style);
+        }
+
+        let col_offset: u16 = if is_number_mode { 4 } else { 0 };
+
+        // Source name field (col=1 in Python, space-filled to 20 chars)
+        let source_col = SOURCE_COL + col_offset;
+        let source_text = format!(" {} ", source_name);
+        let source_display = truncate_to_width(&source_text, 19);
+
+        let (source_fg, source_bg) = if is_selected {
+            (Color::Black, colors.selected_bg)
+        } else {
+            (colors.source, Color::Black)
+        };
+        let source_style = Style::default().fg(source_fg).bg(source_bg);
+        set_string_unicode(buf, source_col, row, &source_display, source_style);
+
+        // Title field (col=20 in Python)
+        let title_col = TITLE_COL + col_offset;
+        let pub_date_len = display_width(pub_date) as u16 + 2;
+        let title_max_width =
+            (width.saturating_sub(title_col + pub_date_len + 1)) as usize;
+
+        let title_text = if is_selected {
+            slice_text_marquee(
+                title,
+                title_max_width,
+                marquee_shift,
+                &mut app.marquee_direction,
+            )
+        } else {
+            truncate_to_width(title, title_max_width)
+        };
+
+        let title_prefix = " ";
+        let (title_fg, title_bg) = if is_selected {
+            (Color::Black, colors.selected_bg)
+        } else {
+            (colors.default, Color::Black)
+        };
+        let title_style = Style::default().fg(title_fg).bg(title_bg);
+        let title_x = title_col.saturating_sub(1);
+        set_string_unicode(buf, title_x, row, title_prefix, title_style);
+        set_string_unicode(buf, title_col, row, &title_text, title_style);
+
+        // PubDate field (right-aligned, col=-1 in Python)
+        let date_text = format!(" {} ", pub_date);
+        let date_display_w = display_width(&date_text) as u16;
+        let date_x = width.saturating_sub(date_display_w);
+
+        let (date_fg, date_bg) = if is_selected {
+            (Color::Black, colors.selected_bg)
+        } else {
+            (colors.time, Color::Black)
+        };
+        let date_style = Style::default().fg(date_fg).bg(date_bg);
+        set_string_unicode(buf, date_x, row, &date_text, date_style);
+    }
+
+    // Clear remaining rows below entries
+    for row in (row_limit + 1) as u16..height {
+        let clear_style = Style::default().fg(Color::Black).bg(Color::Black);
+        let spaces = " ".repeat(width as usize);
+        buf.set_string(0, row, &spaces, clear_style);
+    }
+}
+
+fn render_help(f: &mut Frame, app: &App) {
+    let help_lines = vec![
+        "",
+        "            [Up], [Down], [W], [S], [J], [K] : Select from list",
+        "[Shift]+[Up], [Shift]+[Down], [PgUp], [PgDn] : Quickly select from list",
+        "                                         [O] : Open canonical link",
+        "                                         [:] : Select by typing a number from list",
+        "                        [Tab], [Shift]+[Tab] : Change the category tab",
+        "                             [Q], [Ctrl]+[C] : Quit",
+        "",
+    ];
+
+    let lines_count = help_lines.len();
+    let max_width = help_lines.iter().map(|l| l.len()).max().unwrap_or(0) + 2;
+
+    let width = f.size().width;
+    let height = f.size().height;
+
+    let buf = f.buffer_mut();
+
+    // Clear screen
+    let clear_style = Style::default().fg(Color::Black).bg(Color::Black);
+    for y in 0..height {
+        let spaces = " ".repeat(width as usize);
+        buf.set_string(0, y, &spaces, clear_style);
+    }
+
+    let top = (height as usize / 2).saturating_sub(lines_count / 2);
+    let left = (width as usize / 2).saturating_sub(max_width / 2);
+
+    let style = Style::default()
+        .fg(app.colors.alertfg)
+        .bg(app.colors.alertbg);
+
+    for (i, line) in help_lines.iter().enumerate() {
+        let y = (top + i) as u16;
+        if y >= height {
+            break;
+        }
+        // Fill background for the line width
+        let bg_fill = " ".repeat(max_width);
+        let x = left.saturating_sub(1) as u16;
+        buf.set_string(x, y, &bg_fill, style);
+        buf.set_string(left as u16, y, line, style);
+    }
+}
+
+/// Set a unicode-aware string into the buffer, handling double-width chars properly
+fn set_string_unicode(buf: &mut Buffer, x: u16, y: u16, s: &str, style: Style) {
+    let buf_width = buf.area().width;
+    let buf_height = buf.area().height;
+    if y >= buf_height || x >= buf_width {
+        return;
+    }
+    let mut cx = x;
+    for c in s.chars() {
+        if cx >= buf_width {
+            break;
+        }
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        if cw == 0 {
+            continue;
+        }
+        if cx + (cw as u16) > buf_width {
+            break;
+        }
+        buf.get_mut(cx, y).set_char(c).set_style(style);
+        // For double-width chars, the next cell should be empty
+        if cw == 2 && cx + 1 < buf_width {
+            buf.get_mut(cx + 1, y).set_char(' ').set_style(style);
+        }
+        cx += cw as u16;
+    }
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(0),
-        ])
-        .split(f.size());
+    app.terminal_width = f.size().width;
+    app.terminal_height = f.size().height;
 
-    // Tabs
-    let titles: Vec<Line> = app
-        .categories
-        .iter()
-        .map(|c| {
-            let title = app.category_titles.get(c).unwrap_or(c);
-            Line::from(title.as_str())
-        })
-        .collect();
-
-    let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title(" rreader "))
-        .select(app.current_category)
-        .style(Style::default().fg(Color::White))
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
-
-    f.render_widget(tabs, chunks[0]);
-
-    // Feed list
-    let entries = app.current_entries();
-    let category_name = app.current_category_name();
-    let title = app.category_titles.get(category_name).unwrap_or(&category_name.to_string()).clone();
-
-    if entries.is_empty() {
-        // Show "No entries" message
-        let loading_state = app.get_loading_state();
-        let message = if loading_state.is_loading {
-            "Loading...".to_string()
-        } else {
-            "No entries available. Press 'r' to refresh.".to_string()
-        };
-
-        let empty_msg = Paragraph::new(message)
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title(format!(" {} (0) ", title)));
-        f.render_widget(empty_msg, chunks[1]);
-    } else {
-        let items: Vec<ListItem> = entries
-            .iter()
-            .enumerate()
-            .map(|(i, entry)| {
-                let source = format!("[{:^14}]", truncate_str(&entry.source_name, 14));
-                let date = format!("{:>12}", entry.pub_date);
-                let title = truncate_str(&entry.title, 80);
-
-                let style = if Some(i) == app.list_state.selected() {
-                    Style::default().fg(Color::Black).bg(Color::White)
-                } else {
-                    Style::default()
-                };
-
-                ListItem::new(Line::from(vec![
-                    Span::styled(source, Style::default().fg(Color::Cyan)),
-                    Span::raw(" "),
-                    Span::styled(date, Style::default().fg(Color::DarkGray)),
-                    Span::raw(" "),
-                    Span::styled(title, style),
-                ]))
-            })
-            .collect();
-
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(format!(" {} ({}) ", title, entries.len())));
-
-        f.render_stateful_widget(list, chunks[1], &mut app.list_state);
+    if app.show_help {
+        render_help(f, app);
+        return;
     }
 
-    // Loading indicator (top-right corner)
+    render_category_bar(f, app);
+    render_entries(f, app);
+
+    // Loading indicator
     let loading_state = app.get_loading_state();
     if loading_state.is_loading {
-        let loading_text = format!(" Loading... ({}/{}) ", loading_state.current, loading_state.total);
-        let width = loading_text.len() as u16 + 2;
-        let loading_area = Rect {
-            x: f.size().width.saturating_sub(width + 1),
-            y: 0,
-            width,
-            height: 1,
-        };
-        let loading_widget = Paragraph::new(loading_text)
-            .style(Style::default().fg(Color::Black).bg(Color::Yellow));
-        f.render_widget(loading_widget, loading_area);
-    }
-
-    // Error popup
-    if let Some(ref error) = app.error_message {
-        let area = centered_rect(60, 20, f.size());
-        f.render_widget(Clear, area);
-
-        let error_text = format!("{}\n\nPress any key to dismiss", error);
-        let popup = Paragraph::new(error_text)
-            .style(Style::default().fg(Color::White))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Red))
-                    .title(" Error ")
-                    .title_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-            );
-        f.render_widget(popup, area);
-    }
-}
-
-fn truncate_str(s: &str, max_len: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max_len {
-        s.to_string()
-    } else {
-        chars[..max_len - 3].iter().collect::<String>() + "..."
+        render_alert(f, app, "LOADING");
     }
 }
 
 fn main() -> Result<()> {
-    // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new()?;
     app.load_or_refresh();
 
-    let tick_rate = Duration::from_millis(100);
-    let mut last_tick = Instant::now();
+    let tick_rate = Duration::from_millis(20);
 
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
 
         let timeout = tick_rate
-            .checked_sub(last_tick.elapsed())
-            .unwrap_or_else(|| Duration::from_secs(0));
+            .checked_sub(Instant::now().elapsed())
+            .unwrap_or(Duration::from_millis(0));
 
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                // If error popup is showing, dismiss on any key
-                if app.has_error() {
-                    app.dismiss_error();
+                if app.show_help {
+                    app.show_help = false;
+                    continue;
+                }
+
+                if app.input_mode == InputMode::NumberJump {
+                    match key.code {
+                        KeyCode::Enter | KeyCode::Char(':') => {
+                            let apply = key.code == KeyCode::Enter;
+                            app.exit_number_mode(apply);
+                        }
+                        KeyCode::Char(c) if c.is_ascii_digit() => {
+                            if app.input_number.len() < 3 {
+                                app.input_number.push(c);
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if app.input_number.is_empty() {
+                                app.exit_number_mode(false);
+                            } else {
+                                app.input_number.pop();
+                            }
+                        }
+                        KeyCode::Esc => {
+                            app.exit_number_mode(false);
+                        }
+                        _ => {}
+                    }
                     continue;
                 }
 
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                    KeyCode::Char('q') | KeyCode::Char('Q') => break,
+                    KeyCode::Char('c')
+                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        break
+                    }
+                    KeyCode::Esc => app.deselect(),
                     KeyCode::Tab => app.next_category(),
                     KeyCode::BackTab => app.prev_category(),
-                    KeyCode::Down | KeyCode::Char('j') => app.next_item(),
-                    KeyCode::Up | KeyCode::Char('k') => app.prev_item(),
-                    KeyCode::PageDown | KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
-                    KeyCode::PageUp | KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_up(),
-                    KeyCode::Enter | KeyCode::Char('o') => app.open_selected(),
-                    KeyCode::Char('r') => app.refresh_current_category(),
-                    KeyCode::Char('1') => { app.current_category = 0.min(app.categories.len() - 1); app.list_state.select(Some(0)); app.load_or_refresh(); }
-                    KeyCode::Char('2') => { app.current_category = 1.min(app.categories.len() - 1); app.list_state.select(Some(0)); app.load_or_refresh(); }
-                    KeyCode::Char('3') => { app.current_category = 2.min(app.categories.len() - 1); app.list_state.select(Some(0)); app.load_or_refresh(); }
-                    KeyCode::Char('4') => { app.current_category = 3.min(app.categories.len() - 1); app.list_state.select(Some(0)); app.load_or_refresh(); }
-                    KeyCode::Char('g') => app.list_state.select(Some(0)),
-                    KeyCode::Char('G') => {
-                        let len = app.current_entries().len();
-                        if len > 0 {
-                            app.list_state.select(Some(len - 1));
+                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            app.page_down();
+                        } else {
+                            app.move_down();
                         }
                     }
+                    KeyCode::Char('s') | KeyCode::Char('S') => app.move_down(),
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            app.page_up();
+                        } else {
+                            app.move_up();
+                        }
+                    }
+                    KeyCode::Char('w') | KeyCode::Char('W') => app.move_up(),
+                    KeyCode::PageDown => app.page_down(),
+                    KeyCode::PageUp => app.page_up(),
+                    KeyCode::Enter
+                    | KeyCode::Char('o')
+                    | KeyCode::Char('O')
+                    | KeyCode::Char(' ') => app.open_selected(),
+                    KeyCode::Char('r') | KeyCode::Char('R') => {
+                        app.selected = None;
+                        app.reset_marquee();
+                        app.refresh_current_category();
+                    }
+                    KeyCode::Char(':') => app.enter_number_mode(),
+                    KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?') => {
+                        app.show_help = true;
+                    }
+                    KeyCode::Char('g') => app.go_top(),
+                    KeyCode::Char('G') => app.go_bottom(),
+                    KeyCode::Char('1') => app.select_category(0),
+                    KeyCode::Char('2') => app.select_category(1),
+                    KeyCode::Char('3') => app.select_category(2),
+                    KeyCode::Char('4') => app.select_category(3),
                     _ => {}
                 }
             }
         }
 
-        if last_tick.elapsed() >= tick_rate {
-            last_tick = Instant::now();
+        // Marquee tick
+        app.tick_marquee();
 
-            // Auto-refresh check
-            if app.last_refresh.elapsed() >= Duration::from_secs(REFRESH_INTERVAL) {
-                let loading_state = app.get_loading_state();
-                if !loading_state.is_loading {
-                    app.refresh_current_category();
-                }
+        // Auto-refresh check
+        if app.last_refresh.elapsed() >= Duration::from_secs(REFRESH_INTERVAL) {
+            let loading_state = app.get_loading_state();
+            if !loading_state.is_loading {
+                app.refresh_current_category();
             }
         }
     }
 
-    // Restore terminal
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     Ok(())
