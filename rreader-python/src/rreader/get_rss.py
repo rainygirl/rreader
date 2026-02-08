@@ -78,11 +78,20 @@ def do(target_category=None, log=False):
 
         return rslt
 
+    bundled_feeds_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feeds.json")
+
     if not os.path.isfile(FEEDS_FILE_NAME):
-        shutil.copyfile(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "feeds.json"),
-            FEEDS_FILE_NAME,
-        )
+        shutil.copyfile(bundled_feeds_file, FEEDS_FILE_NAME)
+    else:
+        with open(bundled_feeds_file, "r") as fp:
+            bundled = json.load(fp)
+        with open(FEEDS_FILE_NAME, "r") as fp:
+            user = json.load(fp)
+        new_categories = {k: v for k, v in bundled.items() if k not in user}
+        if new_categories:
+            user.update(new_categories)
+            with open(FEEDS_FILE_NAME, "w", encoding="utf-8") as fp:
+                json.dump(user, fp, indent=4, ensure_ascii=False)
 
     with open(FEEDS_FILE_NAME, "r") as fp:
         RSS = json.load(fp)

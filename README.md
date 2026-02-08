@@ -28,14 +28,27 @@ rreader/
 
 ### Python 버전
 
-Python 3.8 이상 필요
+Python 3.10 이상 필요
 
 ```bash
-# PyPI에서 설치
-pip install rreader
+git clone https://github.com/rainygirl/rreader
+cd rreader/rreader-python
+
+# 가상환경 생성 및 활성화
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# 의존성 설치
+pip install -e .
 
 # 실행
-rr
+python src/rreader/run.py
+```
+
+Gemini 번역 기능을 사용하려면 추가 의존성을 설치합니다:
+
+```bash
+pip install -e ".[gemini]"
 ```
 
 ### Rust 버전
@@ -50,18 +63,13 @@ cargo install --path .
 rreader
 ```
 
-## 소스에서 빌드
+## 배포 패키지 빌드
 
 ### Python
 
 ```bash
-git clone https://github.com/rainygirl/rreader
-cd rreader/rreader-python
+cd rreader-python
 
-# 개발 모드로 설치
-pip install -e .
-
-# 또는 배포 패키지 빌드
 pip install build
 python -m build
 
