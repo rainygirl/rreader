@@ -35,8 +35,11 @@ def do(target_category=None, log=False):
             for feed in d.entries:
 
                 try:
+                    parsed_time = getattr(feed, 'published_parsed', None) or getattr(feed, 'updated_parsed', None)
+                    if not parsed_time:
+                        continue
                     at = (
-                        datetime.datetime(*feed.published_parsed[:6])
+                        datetime.datetime(*parsed_time[:6])
                         .replace(tzinfo=datetime.timezone.utc)
                         .astimezone(TIMEZONE)
                     )
@@ -47,11 +50,15 @@ def do(target_category=None, log=False):
                     "%H:%M" if at.date() == datetime.date.today() else "%b %d, %H:%M"
                 )
 
-                ts = int(time.mktime(feed.published_parsed))
+                ts = int(time.mktime(parsed_time))
+
+                author = source
+                if show_author:
+                    author = getattr(feed, 'author', None) or source
 
                 entries = {
                     "id": ts,
-                    "sourceName": source if not show_author else feed.author,
+                    "sourceName": author,
                     "pubDate": pubDate,
                     "timestamp": ts,
                     "url": feed.link,

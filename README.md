@@ -1,58 +1,56 @@
 # rReader
 
-RSS reader client for CLI (Command Line Interface), spinned off from [rterm](https://github.com/rainygirl/rterm).
+CLI(커맨드 라인 인터페이스)용 RSS 리더 클라이언트. [rterm](https://github.com/rainygirl/rterm)에서 분리된 프로젝트입니다.
 
-Available in **Python** and **Rust**.
+**Python**과 **Rust** 두 가지 버전으로 제공됩니다.
 
-rReader는 한국어 RSS 피드를 지원합니다.
+한국어, 日本語, 中文 RSS 피드를 지원합니다.
 
-rReaderは日本語RSSフィードをサポートしています。
+Python 코드는 Gemini API로 영문 RSS를 한국어로 번역합니다.
 
-rReader该库支持中文RSS。
-
-## Screenshot
+## 스크린샷
 
 ![screenshot](https://user-images.githubusercontent.com/1021138/149663475-fa39c500-1c61-4d4c-93a2-d836b898edf8.gif)
 
-## Project Structure
+## 프로젝트 구조
 
 ```
 rreader/
-├── rreader-python/    # Python implementation
+├── rreader-python/    # Python 구현
 │   ├── pyproject.toml
 │   └── src/rreader/
-└── rreader-rust/      # Rust implementation
+└── rreader-rust/      # Rust 구현
     ├── Cargo.toml
     └── src/
 ```
 
-## Installation
+## 설치
 
-### Python Version
+### Python 버전
 
-Requires Python 3.8+
+Python 3.8 이상 필요
 
 ```bash
-# Install from PyPI
+# PyPI에서 설치
 pip install rreader
 
-# Run
+# 실행
 rr
 ```
 
-### Rust Version
+### Rust 버전
 
-Requires Rust 1.70+
+Rust 1.70 이상 필요
 
 ```bash
 cd rreader-rust
 cargo install --path .
 
-# Run
+# 실행
 rreader
 ```
 
-## Build from Source
+## 소스에서 빌드
 
 ### Python
 
@@ -60,49 +58,42 @@ rreader
 git clone https://github.com/rainygirl/rreader
 cd rreader/rreader-python
 
-# Install in development mode
+# 개발 모드로 설치
 pip install -e .
 
-# Or build distribution packages
+# 또는 배포 패키지 빌드
 pip install build
 python -m build
 
-# The built packages will be in dist/
-# - rreader-x.x.x.tar.gz (source distribution)
+# 빌드된 패키지는 dist/ 디렉토리에 생성됩니다
+# - rreader-x.x.x.tar.gz (소스 배포판)
 # - rreader-x.x.x-py3-none-any.whl (wheel)
 ```
 
-#### Build Standalone Executable
+#### 단일 실행 파일 빌드
 
-Uses [PyInstaller](https://pyinstaller.org/) to create a single executable binary.
-
-```bash
+```
 cd rreader-python
 
-# Install PyInstaller
-pip install pyinstaller
+# 바이너리 빌드
+./build-standaline.sh
 
-# Build standalone executable
-pyinstaller --onefile --strip --name rreader \
-  --add-data "src/rreader/feeds.json:rreader" \
-  src/rreader/run.py
-
-# Binary location: dist/rreader
+# 바이너리 위치: dist/rreader
 ```
 
-#### Cross-compile for i386 (32-bit)
+#### i386 (32비트) 크로스 컴파일
 
-Uses [PyInstaller](https://pyinstaller.org/) inside a Debian (glibc) Docker container to produce a standalone i386 binary compatible with standard 32-bit Linux distributions.
+Debian (glibc) Docker 컨테이너 안에서 [PyInstaller](https://pyinstaller.org/)를 사용하여 표준 32비트 Linux 배포판과 호환되는 i386 바이너리를 생성합니다.
 
-Requires [Docker](https://www.docker.com/).
+[Docker](https://www.docker.com/)가 필요합니다.
 
 ```bash
 cd rreader-python
 
-# Build binary for i386
+# i386용 바이너리 빌드
 ./build-i386.sh
 
-# Binary location: rreader-i386
+# 바이너리 위치: rreader-i386
 ```
 
 ### Rust
@@ -111,34 +102,34 @@ cd rreader-python
 git clone https://github.com/rainygirl/rreader
 cd rreader/rreader-rust
 
-# Build release binary
+# 릴리스 바이너리 빌드
 cargo build --release
 
-# Binary location: target/release/rreader
+# 바이너리 위치: target/release/rreader
 ```
 
-#### Cross-compile for i386 (32-bit)
+#### i386 (32비트) 크로스 컴파일
 
-Use [cross](https://github.com/cross-rs/cross) to build a statically linked i386 binary. This works on macOS and Linux, and produces a binary compatible with old glibc versions.
+[cross](https://github.com/cross-rs/cross)를 사용하여 정적 링크된 i386 바이너리를 빌드합니다. macOS와 Linux에서 동작하며, 구버전 glibc와 호환되는 바이너리를 생성합니다.
 
-Requires [Docker](https://www.docker.com/).
+[Docker](https://www.docker.com/)가 필요합니다.
 
 ```bash
-# Install cross
+# cross 설치
 cargo install cross --git https://github.com/cross-rs/cross
 
-# Build static binary for i386
+# i386용 정적 바이너리 빌드
 cd rreader-rust
 cross build --release --target i686-unknown-linux-musl
 
-# Binary location: target/i686-unknown-linux-musl/release/rreader
+# 바이너리 위치: target/i686-unknown-linux-musl/release/rreader
 ```
 
-## RSS Feeds
+## RSS 피드
 
-You can add/modify RSS feeds in `~/.rreader/feeds.json`
+`~/.rreader/feeds.json` 파일에서 RSS 피드를 추가하거나 수정할 수 있습니다.
 
-Example:
+예시:
 ```json
 {
     "news": {
@@ -159,37 +150,37 @@ Example:
 }
 ```
 
-## Keyboard Shortcuts
+## 단축키
 
-| Key | Action |
+| 키 | 동작 |
 |-----|--------|
-| `h`, `?` | Help |
-| `↑`, `↓`, `j`, `k` | Navigate list |
-| `PgUp`, `PgDn` | Fast scroll |
-| `Enter`, `o` | Open link in browser |
-| `Tab`, `Shift+Tab` | Switch category |
-| `1`-`4` | Jump to category |
-| `r` | Refresh |
-| `g`, `G` | Go to top/bottom |
-| `q`, `Esc`, `Ctrl+C` | Quit |
+| `h`, `?` | 도움말 |
+| `↑`, `↓`, `j`, `k` | 목록 탐색 |
+| `PgUp`, `PgDn` | 빠른 스크롤 |
+| `Enter`, `o` | 브라우저에서 링크 열기 |
+| `Tab`, `Shift+Tab` | 카테고리 전환 |
+| `1`-`4` | 카테고리로 바로 이동 |
+| `r` | 새로고침 |
+| `g`, `G` | 맨 위/아래로 이동 |
+| `q`, `Esc`, `Ctrl+C` | 종료 |
 
-## Development
+## 개발
 
 ### Python
 
 ```bash
 cd rreader-python
 
-# Install with dev dependencies
+# 개발 의존성과 함께 설치
 pip install -e ".[dev]"
 
-# Format code
+# 코드 포맷팅
 black src/
 
-# Lint
+# 린트
 ruff check src/
 
-# Run tests
+# 테스트 실행
 pytest
 ```
 
@@ -198,24 +189,24 @@ pytest
 ```bash
 cd rreader-rust
 
-# Run in debug mode
+# 디버그 모드로 실행
 cargo run
 
-# Run tests
+# 테스트 실행
 cargo test
 
-# Check code
+# 코드 검사
 cargo clippy
 ```
 
-## Contributing
+## 기여
 
-Feel free to fork & contribute!
+자유롭게 포크하고 기여해주세요!
 
-## License
+## 라이선스
 
-rReader is released under the MIT license.
+rReader는 MIT 라이선스로 배포됩니다.
 
-## Credits
+## 크레딧
 
 * [Lee JunHaeng aka rainygirl](https://rainygirl.com/)

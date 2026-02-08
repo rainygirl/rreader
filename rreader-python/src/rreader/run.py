@@ -13,6 +13,7 @@ from asciimatics.screen import Screen
 from asciimatics.effects import Print
 from asciimatics.scene import Scene
 from asciimatics.renderers import ColourImageFile, SpeechBubble
+from asciimatics.event import KeyboardEvent
 
 try:
     from .common import p, FEEDS_FILE_NAME
@@ -20,6 +21,16 @@ try:
 except ImportError:
     from rreader.common import p, FEEDS_FILE_NAME
     from rreader.get_rss import do as get_feeds_from_rss
+
+try:
+    from .gemini import summarize_with_gemini, translate_titles_batch
+    GEMINI_AVAILABLE = True
+except ImportError:
+    try:
+        from rreader.gemini import summarize_with_gemini, translate_titles_batch
+        GEMINI_AVAILABLE = True
+    except ImportError:
+        GEMINI_AVAILABLE = False
 
 
 KEY = {
@@ -115,7 +126,7 @@ FIELDS = {
     ]
 }
 
-data, CURRENT = {}, {}
+data, CURRENT, NEEDS_REDRAW, TRANSLATING_IN_PROGRESS = {}, {}, False, False
 
 os.environ.setdefault("ESCDELAY", "10")
 
@@ -132,14 +143,77 @@ def get_feed(category="news"):
 
     return None
 
+GEMINI_CONFIG_FILE = os.path.join(os.path.expanduser('~'), ".rreader_gemini_config.json")
+
+TRANSLATION_CACHE_FILE = os.path.join(os.path.expanduser('~'), ".rreader_translation_cache.json")
+
+def load_translation_cache():
+    if os.path.exists(TRANSLATION_CACHE_FILE):
+        with open(TRANSLATION_CACHE_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_translation_cache(cache):
+    with open(TRANSLATION_CACHE_FILE, "w") as f:
+        json.dump(cache, f, indent=4)
+
+def get_gemini_api_key():
+    api_key = None
+    if os.path.exists(GEMINI_CONFIG_FILE):
+        with open(GEMINI_CONFIG_FILE, "r") as f:
+            config = json.load(f)
+            api_key = config.get("GEMINI_API_KEY")
+
+    if not api_key:
+        print("Gemini API Key not found.")
+        print("Please visit https://makersuite.google.com/app/apikey to get an API key.")
+        print("Opening browser now...")
+        time.sleep(2)
+        webbrowser.open("https://makersuite.google.com/app/apikey")
+
+        api_key = input("Paste your Gemini API key here and press Enter: ").strip()
+        if api_key:
+            with open(GEMINI_CONFIG_FILE, "w") as f:
+                json.dump({"GEMINI_API_KEY": api_key}, f)
+            print("API Key saved successfully!")
+            time.sleep(1)
+        else:
+            print("No API Key entered. Gemini summarization will not work.")
+            time.sleep(2)
+    return api_key
+
+# Asynchronous title translation
+def translate_all_titles_async(api_key, category, entries):
+    global TRANSLATING_IN_PROGRESS
+    TRANSLATING_IN_PROGRESS = True
+    
+    cache = load_translation_cache()
+    original_titles = [entry.get("title") for entry in entries if entry.get("title")]
+    
+    translated_titles = translate_titles_batch(original_titles, api_key, cache)
+    save_translation_cache(cache) # Save cache after batch translation
+
+    global data, NEEDS_REDRAW
+    if category in data:
+        for entry in data[category]["entries"]:
+            if not entry.get("title_original"):
+                entry["title_original"] = entry.get("title")
+            original_title = entry["title_original"]
+            if original_title in translated_titles:
+                entry["title"] = translated_titles[original_title]
+        NEEDS_REDRAW = True
+
+    TRANSLATING_IN_PROGRESS = False
 
 def layout(screen):
+    global data, CURRENT, gemini_api_key, TRANSLATING_IN_PROGRESS, TRANSLATING_IN_PROGRESS
 
-    global data, CURRENT
+    translation_cache = load_translation_cache()
+    threads = [] # To keep track of translation threads
 
     def reload_data():
 
-        global data, CURRENT
+        global data, CURRENT, translation_cache
 
         while True:
 
@@ -182,6 +256,13 @@ def layout(screen):
                             CURRENT["line"] = i
                             break
                     CURRENT["line"] = i
+                
+                # Initiate batch translation for new/updated feeds
+                if GEMINI_AVAILABLE and gemini_api_key:
+                    thread = threading.Thread(target=translate_all_titles_async, args=(gemini_api_key, c_category, data[c_category]["entries"]))
+                    thread.daemon = True
+                    threads.append(thread)
+                    thread.start()
 
                 draw_categories()
                 draw_entries(force=True)
@@ -200,6 +281,56 @@ def layout(screen):
 
         return sum([2 if is_double_char(d) else 1 for d in s])
 
+    def wrap_text_for_display(text, width):
+        wrapped_lines = []
+        current_line = []
+        current_width = 0
+
+        words = text.split(' ') # Split by space, adjust if more sophisticated tokenization is needed
+
+        for word in words:
+            word_width = text_length(word)
+            
+            # Check if the word itself is wider than the line
+            if word_width > width:
+                # If so, break the word
+                if current_line: # Add any existing part of the line before breaking the word
+                    wrapped_lines.append(" ".join(current_line))
+                current_line = []
+                current_width = 0
+
+                temp_word = ""
+                temp_word_width = 0
+                for char in word:
+                    char_width = text_length(char)
+                    if temp_word_width + char_width > width:
+                        wrapped_lines.append(temp_word)
+                        temp_word = char
+                        temp_word_width = char_width
+                    else:
+                        temp_word += char
+                        temp_word_width += char_width
+                if temp_word:
+                    current_line.append(temp_word)
+                    current_width = temp_word_width
+                continue
+
+            if current_width + (text_length(" ") if current_line else 0) + word_width > width:
+                wrapped_lines.append(" ".join(current_line))
+                current_line = [word]
+                current_width = word_width
+            else:
+                if current_line:
+                    current_width += text_length(" ")
+                current_line.append(word)
+                current_width += word_width
+        
+        if current_line:
+            wrapped_lines.append(" ".join(current_line))
+        
+        return wrapped_lines
+
+
     def alert(screen, text):
 
         space = 3
@@ -211,6 +342,18 @@ def layout(screen):
             text, pos[0], pos[1], colour=COLOR["alertfg"], bg=COLOR["alertbg"]
         )
         screen.refresh()
+
+    def display_translating_status(screen):
+        if TRANSLATING_IN_PROGRESS:
+            status_text = "Translating..."
+            status_width = text_length(status_text)
+            status_x = screen.width - status_width - 1 # 1 for padding
+            screen.print_at(status_text, status_x, 0, colour=COLOR["alertfg"], bg=COLOR["alertbg"])
+        else:
+            # Clear the area if not translating
+            status_text = " " * (text_length("Translating...") + 1)
+            status_x = screen.width - text_length("Translating...") - 1
+            screen.print_at(status_text, status_x, 0, colour=0, bg=0)
 
     def slice_text(s, l, max_width=80, shift=0):
         rslt = ""
@@ -275,6 +418,8 @@ def layout(screen):
                 )
 
             x += len(s) + 2
+
+        display_translating_status(screen)
 
     def draw_entries(clearline=False, force=False, lines=False):
 
@@ -416,22 +561,81 @@ def layout(screen):
         screen.refresh()
 
     def open_url(cn):
-
+        url = None
         if "link" in cn:
-            webbrowser.open(cn["link"], new=2)
+            url = cn["link"]
         elif "url" in cn:
-            webbrowser.open(cn["url"], new=2)
-        elif "links" in cn:
-            if len(cn["links"]) == 1:
-                webbrowser.open(cn["links"][0], new=2)
-            else:
-                webbrowser.open(cn["permalink"], new=2)
+            url = cn["url"]
+        elif "links" in cn and cn["links"]:
+            url = cn["links"][0]
         elif "permalink" in cn:
-            webbrowser.open(cn["permalink"], new=2)
-        else:
+            url = cn["permalink"]
+
+        if not url:
             return False
 
+        if GEMINI_AVAILABLE and gemini_api_key:
+            alert(screen, "SUMMARIZING WITH GEMINI...")
+            summary = summarize_with_gemini(url, gemini_api_key)
+            show_summary_modal(summary)
+        else:
+            webbrowser.open(url, new=2)
         return True
+
+    def show_summary_modal(summary_text):
+        # Determine the size and position of the modal
+        modal_width = int(screen.width * 0.8)
+        modal_height = int(screen.height * 0.8)
+        start_x = (screen.width - modal_width) // 2
+        start_y = (screen.height - modal_height) // 2
+
+        # Wrap the summary text
+        wrapped_text = wrap_text_for_display(summary_text, modal_width - 4)
+        
+        scroll_pos = 0
+
+        while True:
+            # Clear the modal area
+            for y in range(modal_height):
+                screen.print_at(" " * modal_width, start_x, start_y + y, bg=COLOR["categorybg"])
+
+            # Draw the border
+            for y in range(start_y, start_y + modal_height):
+                screen.print_at("|", start_x, y, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
+                screen.print_at("|", start_x + modal_width -1, y, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
+            screen.print_at("-" * modal_width, start_x, start_y, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
+            screen.print_at("-" * modal_width, start_x, start_y + modal_height - 1, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
+
+            # Display the text
+            for i, line in enumerate(wrapped_text[scroll_pos:]):
+                if i >= modal_height - 2:
+                    break
+                screen.print_at(line, start_x + 2, start_y + 1 + i, colour=COLOR["categoryfg"], bg=COLOR["categorybg"])
+
+            # Add ESC Close label
+            esc_label = "[ESC] Close"
+            esc_label_width = text_length(esc_label)
+            esc_label_x = start_x + (modal_width - esc_label_width) // 2
+            screen.print_at(esc_label, esc_label_x, start_y + modal_height - 2, colour=COLOR["categoryfgS"], bg=COLOR["categorybgS"])
+            
+            screen.refresh()
+
+            # Wait for keypress
+            keycode = screen.get_key()
+            if keycode == KEY["esc"]:
+                break
+            elif keycode == KEY["down"]:
+                if scroll_pos < len(wrapped_text) - (modal_height - 2):
+                    scroll_pos += 1
+            elif keycode == KEY["up"]:
+                if scroll_pos > 0:
+                    scroll_pos -= 1
+        
+        # Redraw the main screen after closing the modal
+        draw_categories()
+        draw_entries(force=True)
+        screen.refresh()
+
 
     def show_help():
         w = 60
@@ -479,6 +683,12 @@ def layout(screen):
     CURRENT = {"line": -1, "column": -1, "category": "news"}
 
     data[CURRENT["category"]] = get_feed(CURRENT["category"])
+
+    # Initiate batch translation if not already in progress
+    if GEMINI_AVAILABLE and gemini_api_key and not TRANSLATING_IN_PROGRESS:
+        thread = threading.Thread(target=translate_all_titles_async, args=(gemini_api_key, CURRENT["category"], data[CURRENT["category"]]["entries"]))
+        thread.daemon = True
+        thread.start()
 
     CONFIG["rowlimit"] = screen.height - 2
 
@@ -577,13 +787,10 @@ def layout(screen):
                 if CURRENT["line"] >= CONFIG["rowlimit"]:
                     CURRENT["line"] = 0
 
-            elif keycode in KEY["o"]:
-                open_url(data[CURRENT["category"]]["entries"][CURRENT["line"]])
+            elif keycode in KEY["o"] or keycode == KEY["space"] or keycode == KEY["enter"]:
+                if CURRENT["line"] != -1:
+                    open_url(data[CURRENT["category"]]["entries"][CURRENT["line"]])
 
-            elif keycode == KEY["space"]:
-                cn = data[CURRENT["category"]]["entries"][CURRENT["line"]]
-
-                open_url(cn)
 
             elif keycode == KEY[":"]:
                 CURRENT["input"] = True
@@ -618,6 +825,12 @@ def layout(screen):
                 alert(screen, "LOADING")
 
                 data[CURRENT["category"]] = get_feed(CURRENT["category"])
+
+                # Initiate batch translation if not already in progress
+                if GEMINI_AVAILABLE and gemini_api_key and not TRANSLATING_IN_PROGRESS:
+                    thread = threading.Thread(target=translate_all_titles_async, args=(gemini_api_key, CURRENT["category"], data[CURRENT["category"]]["entries"]))
+                    thread.daemon = True
+                    thread.start()
 
                 CURRENT["line"] = -1
                 CURRENT["oline"] = -1
@@ -666,6 +879,15 @@ def layout(screen):
         if screen.has_resized():
             return False
 
+        global NEEDS_REDRAW
+        if NEEDS_REDRAW:
+            draw_entries(force=True)
+            screen.refresh()
+            NEEDS_REDRAW = False
+
+
+
+
 
 def do():
     def signal_handler(sig, frame):
@@ -681,6 +903,13 @@ def do():
         RSS = json.load(fp)
 
     CONFIG["categories"] = tuple([(key, d["title"]) for key, d in RSS.items()])
+
+    # Acquire the Gemini API key before starting the main TUI loop
+    global gemini_api_key
+    if GEMINI_AVAILABLE:
+        gemini_api_key = get_gemini_api_key()
+    else:
+        gemini_api_key = None
 
     while True:
         if Screen.wrapper(layout):

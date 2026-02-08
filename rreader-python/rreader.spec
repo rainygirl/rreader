@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('src/rreader/feeds.json', 'rreader')]
 binaries = []
-hiddenimports = ['feedparser', 'wcwidth', 'PIL']
+hiddenimports = ['feedparser', 'wcwidth', 'PIL', 'google.genai', 'requests', 'bs4']
 tmp_ret = collect_all('asciimatics')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
