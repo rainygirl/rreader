@@ -9,6 +9,7 @@ license = "MIT"
 [dependencies]
 # RSS parsing
 rss = "2.0"
+atom_syndication = "0.4"
 # HTTP client (blocking, lightweight for i386)
 ureq = { version = "2.9", features = ["native-certs"] }
 # JSON handling

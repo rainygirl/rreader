@@ -39,6 +39,8 @@ struct FeedEntry {
     timestamp: i64,
     url: String,
     title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title_original: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +130,266 @@ impl ColorScheme {
     }
 }
 
+// ── Gemini API helpers ──
+
+fn load_gemini_api_key() -> Option<String> {
+    let config_path = dirs::home_dir()?.join(".rreader_gemini_config.json");
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+            return config
+                .get("GEMINI_API_KEY")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+fn load_translation_cache() -> HashMap<String, String> {
+    let path = match dirs::home_dir() {
+        Some(h) => h.join(".rreader_translation_cache.json"),
+        None => return HashMap::new(),
+    };
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(cache) = serde_json::from_str::<HashMap<String, String>>(&content) {
+            return cache;
+        }
+    }
+    HashMap::new()
+}
+
+fn save_translation_cache(cache: &HashMap<String, String>) {
+    let path = match dirs::home_dir() {
+        Some(h) => h.join(".rreader_translation_cache.json"),
+        None => return,
+    };
+    if let Ok(content) = serde_json::to_string_pretty(cache) {
+        let _ = fs::write(&path, content);
+    }
+}
+
+fn call_gemini_api(api_key: &str, prompt: &str) -> Result<String> {
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={}",
+        api_key
+    );
+
+    let body = serde_json::json!({
+        "contents": [{
+            "parts": [{
+                "text": prompt
+            }]
+        }]
+    });
+
+    let response = ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .timeout(Duration::from_secs(30))
+        .send_string(&body.to_string())?;
+
+    let resp_text = response.into_string()?;
+    let resp_json: serde_json::Value = serde_json::from_str(&resp_text)?;
+
+    let text = resp_json
+        .get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(|p| p.get(0))
+        .and_then(|p| p.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(text)
+}
+
+fn translate_titles_batch(
+    titles: &[String],
+    api_key: &str,
+    cache: &mut HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+    let mut titles_to_translate = Vec::new();
+
+    for t in titles {
+        if let Some(cached) = cache.get(t) {
+            result.insert(t.clone(), cached.clone());
+        } else {
+            titles_to_translate.push(t.clone());
+        }
+    }
+
+    if titles_to_translate.is_empty() {
+        return result;
+    }
+
+    let titles_json = serde_json::json!({ "titles": titles_to_translate });
+    let prompt = format!(
+        "Translate the 'titles' in the following JSON to Korean and return the result as a JSON object where each original title from the input is a key and its Korean translation is the value. For example, for input {{\"titles\": [\"Hello\", \"World\"]}}, the output should be {{\"Hello\": \"안녕하세요\", \"World\": \"세상\"}}. Respond with ONLY the JSON object.\n\nInput:\n{}",
+        titles_json
+    );
+
+    if let Ok(response_text) = call_gemini_api(api_key, &prompt) {
+        let cleaned = response_text
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+
+        if let Ok(translated_data) = serde_json::from_str::<serde_json::Value>(cleaned) {
+            let dict = if let Some(titles_obj) = translated_data.get("titles") {
+                titles_obj
+            } else {
+                &translated_data
+            };
+
+            if let Some(obj) = dict.as_object() {
+                for (original, translated) in obj {
+                    if let Some(t) = translated.as_str() {
+                        cache.insert(original.clone(), t.to_string());
+                        result.insert(original.clone(), t.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    result
+}
+
+// ── HTML tag stripping ──
+
+fn strip_html_tags(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut in_script = false;
+    let mut in_style = false;
+    let mut tag_name = String::new();
+    let mut capturing_tag_name = false;
+
+    for c in html.chars() {
+        if c == '<' {
+            in_tag = true;
+            tag_name.clear();
+            capturing_tag_name = true;
+            continue;
+        }
+        if c == '>' {
+            in_tag = false;
+            let lower = tag_name.to_lowercase();
+            if lower == "script" {
+                in_script = true;
+            } else if lower == "/script" {
+                in_script = false;
+            } else if lower == "style" {
+                in_style = true;
+            } else if lower == "/style" {
+                in_style = false;
+            } else if lower == "br" || lower == "br/" || lower == "p" || lower == "/p"
+                || lower == "div" || lower == "/div" || lower == "li" || lower == "/li"
+            {
+                result.push('\n');
+            }
+            capturing_tag_name = false;
+            continue;
+        }
+        if in_tag {
+            if capturing_tag_name {
+                if c.is_whitespace() || c == '/' && tag_name.is_empty() {
+                    if !tag_name.is_empty() {
+                        capturing_tag_name = false;
+                    } else if c == '/' {
+                        tag_name.push(c);
+                    }
+                } else {
+                    tag_name.push(c);
+                }
+            }
+            continue;
+        }
+        if in_script || in_style {
+            continue;
+        }
+        result.push(c);
+    }
+
+    // Decode common HTML entities
+    result
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&#x27;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&#160;", " ")
+}
+
+fn summarize_with_gemini(url: &str, api_key: &str) -> String {
+    // Fetch URL content
+    let response = match ureq::get(url)
+        .set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .timeout(Duration::from_secs(10))
+        .call()
+    {
+        Ok(r) => r,
+        Err(e) => return format!("Error fetching URL: {}", e),
+    };
+
+    let body = match response.into_string() {
+        Ok(b) => b,
+        Err(e) => return format!("Error reading response: {}", e),
+    };
+
+    let page_text = strip_html_tags(&body);
+
+    // Truncate if too long (Gemini has input limits)
+    let truncated = if page_text.len() > 30000 {
+        &page_text[..30000]
+    } else {
+        &page_text
+    };
+
+    let prompt = format!(
+        "Please summarize the following text in Korean, extracted from the URL {}:\n\n{}",
+        url, truncated
+    );
+
+    match call_gemini_api(api_key, &prompt) {
+        Ok(text) => text,
+        Err(e) => format!("Error from Gemini API: {}", e),
+    }
+}
+
+fn wrap_text_for_display(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        if line.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        let mut current = String::new();
+        let mut current_width = 0;
+        for c in line.chars() {
+            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+            if current_width + cw > width {
+                lines.push(current);
+                current = String::new();
+                current_width = 0;
+            }
+            current.push(c);
+            current_width += cw;
+        }
+        if !current.is_empty() {
+            lines.push(current);
+        }
+    }
+    lines
+}
+
 struct App {
     categories: Vec<String>,
     category_titles: HashMap<String, String>,
@@ -153,6 +415,18 @@ struct App {
     // Terminal dimensions (cached per frame)
     terminal_width: u16,
     terminal_height: u16,
+    // Gemini translation
+    gemini_api_key: Option<String>,
+    translating_in_progress: Arc<Mutex<bool>>,
+    translation_cache: Arc<Mutex<HashMap<String, String>>>,
+    needs_redraw: Arc<Mutex<bool>>,
+    pending_translations: Arc<Mutex<HashMap<String, HashMap<String, String>>>>,
+    // Summary modal
+    show_modal: bool,
+    modal_text: Vec<String>,
+    modal_scroll: usize,
+    summarizing: bool,
+    summarize_url: String,
 }
 
 impl App {
@@ -196,6 +470,9 @@ impl App {
             ColorScheme::new_16()
         };
 
+        let gemini_api_key = load_gemini_api_key();
+        let cache = load_translation_cache();
+
         Ok(App {
             categories,
             category_titles,
@@ -216,6 +493,16 @@ impl App {
             colors,
             terminal_width: 80,
             terminal_height: 24,
+            gemini_api_key,
+            translating_in_progress: Arc::new(Mutex::new(false)),
+            translation_cache: Arc::new(Mutex::new(cache)),
+            needs_redraw: Arc::new(Mutex::new(false)),
+            pending_translations: Arc::new(Mutex::new(HashMap::new())),
+            show_modal: false,
+            modal_text: Vec::new(),
+            modal_scroll: 0,
+            summarizing: false,
+            summarize_url: String::new(),
         })
     }
 
@@ -321,8 +608,22 @@ impl App {
             .call()?;
 
         let body = response.into_string()?;
-        let channel = Channel::read_from(body.as_bytes())?;
 
+        // Try RSS first, then Atom
+        if let Ok(channel) = Channel::read_from(body.as_bytes()) {
+            Self::parse_rss_channel(&channel, source_name, show_author)
+        } else if let Ok(feed) = body.parse::<atom_syndication::Feed>() {
+            Self::parse_atom_feed(&feed, source_name, show_author)
+        } else {
+            anyhow::bail!("Failed to parse feed as RSS or Atom: {}", url)
+        }
+    }
+
+    fn parse_rss_channel(
+        channel: &Channel,
+        source_name: &str,
+        show_author: bool,
+    ) -> Result<Vec<FeedEntry>> {
         let mut entries = Vec::new();
         let today = Local::now().date_naive();
 
@@ -363,6 +664,77 @@ impl App {
                 timestamp,
                 url: link,
                 title,
+                title_original: None,
+            });
+        }
+
+        Ok(entries)
+    }
+
+    fn parse_atom_feed(
+        feed: &atom_syndication::Feed,
+        source_name: &str,
+        show_author: bool,
+    ) -> Result<Vec<FeedEntry>> {
+        let mut entries = Vec::new();
+        let today = Local::now().date_naive();
+
+        for entry in &feed.entries {
+            let title = if entry.title.is_empty() {
+                "(No title)".to_string()
+            } else {
+                entry.title.clone()
+            };
+
+            // Prefer rel="alternate" link, fall back to first link
+            let link = entry
+                .links
+                .iter()
+                .find(|l| l.rel.as_deref() == Some("alternate"))
+                .or_else(|| entry.links.first())
+                .map(|l| l.href.clone())
+                .unwrap_or_default();
+
+            // Parse date: prefer published, fall back to updated
+            let date_str = entry
+                .published
+                .as_deref()
+                .unwrap_or(&entry.updated);
+
+            let parsed_date = DateTime::parse_from_rfc3339(date_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            let local_date = Local.from_utc_datetime(&parsed_date.naive_utc());
+            let timestamp = parsed_date.timestamp();
+
+            let formatted_date = if local_date.date_naive() == today {
+                local_date.format("%H:%M").to_string()
+            } else {
+                local_date.format("%b %d, %H:%M").to_string()
+            };
+
+            let display_name = if show_author {
+                entry
+                    .authors
+                    .first()
+                    .map(|a| {
+                        // Reddit author names often start with /u/
+                        a.name.trim_start_matches("/u/").to_string()
+                    })
+                    .unwrap_or_else(|| source_name.to_string())
+            } else {
+                source_name.to_string()
+            };
+
+            entries.push(FeedEntry {
+                id: timestamp,
+                source_name: display_name,
+                pub_date: formatted_date,
+                timestamp,
+                url: link,
+                title,
+                title_original: None,
             });
         }
 
@@ -378,6 +750,7 @@ impl App {
             }
             Err(_) => {}
         }
+        self.trigger_translation();
     }
 
     fn load_or_refresh(&mut self) {
@@ -386,6 +759,7 @@ impl App {
             let age = Utc::now().timestamp() - cached.created_at;
             if age < REFRESH_INTERVAL as i64 && !cached.entries.is_empty() {
                 self.entries.insert(category, cached.entries);
+                self.trigger_translation();
                 return;
             }
         }
@@ -511,11 +885,19 @@ impl App {
         self.selected = None;
     }
 
-    fn open_selected(&self) {
+    fn open_selected(&mut self) {
         if let Some(i) = self.selected {
-            let entries = self.current_entries();
-            if let Some(entry) = entries.get(i) {
-                let _ = open::that(&entry.url);
+            let url = self
+                .current_entries()
+                .get(i)
+                .map(|e| e.url.clone());
+            if let Some(url) = url {
+                if self.gemini_api_key.is_some() {
+                    self.summarizing = true;
+                    self.summarize_url = url;
+                } else {
+                    let _ = open::that(&url);
+                }
             }
         }
     }
@@ -590,6 +972,141 @@ impl App {
                 }
             }
         }
+    }
+
+    fn trigger_translation(&self) {
+        let api_key = match &self.gemini_api_key {
+            Some(k) => k.clone(),
+            None => return,
+        };
+
+        // Check if already translating
+        {
+            let in_progress = self.translating_in_progress.lock().unwrap();
+            if *in_progress {
+                return;
+            }
+        }
+
+        let category = self.current_category_name().to_string();
+        let titles: Vec<String> = self
+            .current_entries()
+            .iter()
+            .map(|e| {
+                e.title_original
+                    .as_ref()
+                    .unwrap_or(&e.title)
+                    .clone()
+            })
+            .collect();
+
+        if titles.is_empty() {
+            return;
+        }
+
+        // Check if all titles are already in cache
+        {
+            let cache = self.translation_cache.lock().unwrap();
+            let all_cached = titles.iter().all(|t| cache.contains_key(t));
+            if all_cached {
+                // Apply from cache directly
+                let mut translations = HashMap::new();
+                for t in &titles {
+                    if let Some(tr) = cache.get(t) {
+                        translations.insert(t.clone(), tr.clone());
+                    }
+                }
+                let mut pending = self.pending_translations.lock().unwrap();
+                pending.insert(category, translations);
+                let mut needs = self.needs_redraw.lock().unwrap();
+                *needs = true;
+                return;
+            }
+        }
+
+        let translating = Arc::clone(&self.translating_in_progress);
+        let cache_arc = Arc::clone(&self.translation_cache);
+        let pending_arc = Arc::clone(&self.pending_translations);
+        let needs_arc = Arc::clone(&self.needs_redraw);
+
+        {
+            let mut in_progress = translating.lock().unwrap();
+            *in_progress = true;
+        }
+
+        std::thread::spawn(move || {
+            let mut cache = cache_arc.lock().unwrap().clone();
+            let translations = translate_titles_batch(&titles, &api_key, &mut cache);
+
+            // Save updated cache
+            {
+                let mut shared_cache = cache_arc.lock().unwrap();
+                *shared_cache = cache.clone();
+            }
+            save_translation_cache(&cache);
+
+            // Store pending translations
+            {
+                let mut pending = pending_arc.lock().unwrap();
+                pending.insert(category, translations);
+            }
+
+            // Signal main loop
+            {
+                let mut needs = needs_arc.lock().unwrap();
+                *needs = true;
+            }
+
+            {
+                let mut in_progress = translating.lock().unwrap();
+                *in_progress = false;
+            }
+        });
+    }
+
+    fn apply_pending_translations(&mut self) {
+        let pending: HashMap<String, HashMap<String, String>> = {
+            let mut pending = self.pending_translations.lock().unwrap();
+            std::mem::take(&mut *pending)
+        };
+
+        for (category, translations) in pending {
+            if let Some(entries) = self.entries.get_mut(&category) {
+                for entry in entries.iter_mut() {
+                    let original = entry
+                        .title_original
+                        .as_ref()
+                        .unwrap_or(&entry.title)
+                        .clone();
+                    if let Some(translated) = translations.get(&original) {
+                        if entry.title_original.is_none() {
+                            entry.title_original = Some(entry.title.clone());
+                        }
+                        entry.title = translated.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    fn do_summarize(&mut self) {
+        let url = self.summarize_url.clone();
+        let api_key = match &self.gemini_api_key {
+            Some(k) => k.clone(),
+            None => {
+                self.summarizing = false;
+                return;
+            }
+        };
+
+        let summary = summarize_with_gemini(&url, &api_key);
+
+        let width = (self.terminal_width as f32 * 0.8) as usize;
+        let content_width = width.saturating_sub(4).max(10);
+        self.modal_text = wrap_text_for_display(&summary, content_width);
+        self.modal_scroll = 0;
+        self.show_modal = true;
+        self.summarizing = false;
     }
 }
 
@@ -927,6 +1444,90 @@ fn render_help(f: &mut Frame, app: &App) {
     }
 }
 
+fn render_modal(f: &mut Frame, app: &App) {
+    let width = f.size().width;
+    let height = f.size().height;
+
+    let modal_width = (width as f32 * 0.8) as usize;
+    let modal_height = (height as f32 * 0.8) as usize;
+    let start_x = ((width as usize).saturating_sub(modal_width)) / 2;
+    let start_y = ((height as usize).saturating_sub(modal_height)) / 2;
+
+    let buf = f.buffer_mut();
+
+    let bg_style = Style::default()
+        .fg(app.colors.categoryfg)
+        .bg(app.colors.categorybg);
+    let border_style = Style::default()
+        .fg(app.colors.categoryfg_s)
+        .bg(app.colors.categorybg);
+
+    // Clear modal area
+    for y in 0..modal_height {
+        let py = (start_y + y) as u16;
+        if py >= height {
+            break;
+        }
+        let spaces = " ".repeat(modal_width);
+        buf.set_string(start_x as u16, py, &spaces, bg_style);
+    }
+
+    // Draw borders
+    let top_border = "-".repeat(modal_width);
+    let bottom_border = "-".repeat(modal_width);
+    buf.set_string(start_x as u16, start_y as u16, &top_border, border_style);
+    if start_y + modal_height - 1 < height as usize {
+        buf.set_string(
+            start_x as u16,
+            (start_y + modal_height - 1) as u16,
+            &bottom_border,
+            border_style,
+        );
+    }
+
+    // Side borders
+    for y in start_y..(start_y + modal_height) {
+        let py = y as u16;
+        if py >= height {
+            break;
+        }
+        buf.set_string(start_x as u16, py, "|", border_style);
+        if start_x + modal_width - 1 < width as usize {
+            buf.set_string((start_x + modal_width - 1) as u16, py, "|", border_style);
+        }
+    }
+
+    // Display text content
+    let content_height = modal_height.saturating_sub(3); // top border + bottom border + esc label
+    let content_x = (start_x + 2) as u16;
+    let content_width = modal_width.saturating_sub(4);
+
+    for (i, line) in app.modal_text.iter().skip(app.modal_scroll).enumerate() {
+        if i >= content_height {
+            break;
+        }
+        let py = (start_y + 1 + i) as u16;
+        if py >= height {
+            break;
+        }
+        let display_line = truncate_to_width(line, content_width);
+        set_string_unicode(buf, content_x, py, &display_line, bg_style);
+    }
+
+    // ESC Close label
+    let esc_label = "[ESC] Close";
+    let esc_style = Style::default()
+        .fg(app.colors.categoryfg_s)
+        .bg(app.colors.categorybg_s);
+    let esc_x = start_x + (modal_width.saturating_sub(esc_label.len())) / 2;
+    if start_y + modal_height >= 2 {
+        let esc_y = (start_y + modal_height - 2) as u16;
+        if esc_y < height {
+            buf.set_string(esc_x as u16, esc_y, esc_label, esc_style);
+        }
+    }
+}
+
 /// Set a unicode-aware string into the buffer, handling double-width chars properly
 fn set_string_unicode(buf: &mut Buffer, x: u16, y: u16, s: &str, style: Style) {
     let buf_width = buf.area().width;
@@ -972,6 +1573,24 @@ fn ui(f: &mut Frame, app: &mut App) {
     if loading_state.is_loading {
         render_alert(f, app, "LOADING");
     }
+
+    // Translating indicator
+    {
+        let translating = app.translating_in_progress.lock().unwrap();
+        if *translating && !loading_state.is_loading {
+            render_alert(f, app, "TRANSLATING...");
+        }
+    }
+
+    // Summarizing indicator
+    if app.summarizing {
+        render_alert(f, app, "SUMMARIZING WITH GEMINI...");
+    }
+
+    // Modal overlay
+    if app.show_modal {
+        render_modal(f, app);
+    }
 }
 
 fn main() -> Result<()> {
@@ -987,6 +1606,15 @@ fn main() -> Result<()> {
     let tick_rate = Duration::from_millis(20);
 
     loop {
+        // Check if summarizing needs to be done (2-step state machine)
+        if app.summarizing && !app.show_modal {
+            // Render once to show "SUMMARIZING..." alert
+            terminal.draw(|f| ui(f, &mut app))?;
+            // Now do the blocking API call
+            app.do_summarize();
+            continue;
+        }
+
         terminal.draw(|f| ui(f, &mut app))?;
 
         let timeout = tick_rate
@@ -995,6 +1623,45 @@ fn main() -> Result<()> {
 
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
+                // Modal key handling
+                if app.show_modal {
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.show_modal = false;
+                            app.modal_text.clear();
+                            app.modal_scroll = 0;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                            let max_scroll = app
+                                .modal_text
+                                .len()
+                                .saturating_sub((app.terminal_height as f32 * 0.8) as usize - 3);
+                            if app.modal_scroll < max_scroll {
+                                app.modal_scroll += 1;
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                            if app.modal_scroll > 0 {
+                                app.modal_scroll -= 1;
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            let page = ((app.terminal_height as f32 * 0.8) as usize).saturating_sub(3);
+                            let max_scroll = app
+                                .modal_text
+                                .len()
+                                .saturating_sub((app.terminal_height as f32 * 0.8) as usize - 3);
+                            app.modal_scroll = (app.modal_scroll + page).min(max_scroll);
+                        }
+                        KeyCode::PageUp => {
+                            let page = ((app.terminal_height as f32 * 0.8) as usize).saturating_sub(3);
+                            app.modal_scroll = app.modal_scroll.saturating_sub(page);
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 if app.show_help {
                     app.show_help = false;
                     continue;
@@ -1080,6 +1747,16 @@ fn main() -> Result<()> {
 
         // Marquee tick
         app.tick_marquee();
+
+        // Check for pending translations
+        {
+            let mut needs = app.needs_redraw.lock().unwrap();
+            if *needs {
+                *needs = false;
+                drop(needs);
+                app.apply_pending_translations();
+            }
+        }
 
         // Auto-refresh check
         if app.last_refresh.elapsed() >= Duration::from_secs(REFRESH_INTERVAL) {
