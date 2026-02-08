@@ -92,14 +92,14 @@ pyinstaller --onefile --strip --name rreader \
 
 #### Cross-compile for i386 (32-bit)
 
-Uses [PyInstaller](https://pyinstaller.org/) inside an Alpine Linux (musl) Docker container to produce a standalone i386 binary with no glibc dependency.
+Uses [PyInstaller](https://pyinstaller.org/) inside a Debian (glibc) Docker container to produce a standalone i386 binary compatible with standard 32-bit Linux distributions.
 
 Requires [Docker](https://www.docker.com/).
 
 ```bash
 cd rreader-python
 
-# Build static binary for i386
+# Build binary for i386
 ./build-i386.sh
 
 # Binary location: rreader-i386
