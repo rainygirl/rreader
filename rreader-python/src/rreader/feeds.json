@@ -2,39 +2,53 @@
     "news": {
         "title": "Top News",
         "feeds": {
-            "CNBC": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
             "BBC": "http://feeds.bbci.co.uk/news/rss.xml",
-            "WSJ": "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
-            "ProPublica": "http://feeds.propublica.org/propublica/main",
-            "New York Times": "https://www.nytimes.com/svc/collections/v1/publish/https://www.nytimes.com/section/world/rss.xml",
+            "WSJ": "https://feeds.content.dowjones.io/public/rss/RSSWorldNews",
+            "New York Times": "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
             "Al Jazeera": "https://www.aljazeera.com/xml/rss/all.xml",
-            "CNN": "http://rss.cnn.com/rss/edition_world.rss",
+            "CNN": "http://rss.cnn.com/rss/cnn_topstories.rss",
             "The Guardian": "https://www.theguardian.com/world/rss",
-            "Washington Post": "http://feeds.washingtonpost.com/rss/world",
-            "Vox": "https://www.vox.com/rss/world/index.xml",
-            "SCMP": "https://www.scmp.com/rss/91/feed"
+            "SCMP": "https://www.scmp.com/rss/91/feed",
+            "New Yorker": "https://www.newyorker.com/feed/news",
+            "Vox": "https://www.vox.com/rss/index.xml",
+            "Independent": "https://www.independent.co.uk/news/world/rss"
         }
     },
     "business": {
         "title": "Business",
         "feeds": {
             "Business Insider": "https://markets.businessinsider.com/rss/news",
-            "CNBC": "https://www.cnbc.com/id/10001147/device/rss/rss.html",
             "BBC": "http://feeds.bbci.co.uk/news/business/rss.xml",
-            "WSJ": "https://feeds.a.dj.com/rss/RSSMarketsMain.xml"
+            "WSJ": "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain",
+            "WIRED": "https://www.wired.com/feed/category/business/latest/rss",
+            "Financial Times": "https://www.ft.com/rss/home/international"
         }
     },
     "tech": {
         "title": "Tech",
         "feeds": {
-            "WIRED" : "https://www.wired.com/feed/rss",
-            "Mashable": "http://feeds.mashable.com/Mashable",
+            "WIRED AI": "https://www.wired.com/feed/tag/ai/latest/rss",
+            "WIRED Culture": "https://www.wired.com/feed/category/culture/latest/rss",
+            "WIRED Gear": "https://www.wired.com/feed/category/gear/latest/rss",
+            "WIRED Ideas": "https://www.wired.com/feed/category/ideas/latest/rss",
+            "WIRED Science": "https://www.wired.com/feed/category/science/latest/rss",
+            "WIRED Security": "https://www.wired.com/feed/category/security/latest/rss",
+            "WIRED Back": "https://www.wired.com/feed/category/backchannel/latest/rss",
+            "WIRED Guides": "https://www.wired.com/feed/tag/wired-guide/latest/rss",
             "Y Combinator": "https://news.ycombinator.com/rss",
-            "CNBC": "https://www.cnbc.com/id/19854910/device/rss/rss.html",
             "BBC": "http://feeds.bbci.co.uk/news/technology/rss.xml",
-            "WSJ": "https://feeds.a.dj.com/rss/RSSWSJD.xml",
-            "TechCrunch": "http://feeds.feedburner.com/TechCrunch/",
-            "New York Times": "https://www.nytimes.com/svc/collections/v1/publish/https://www.nytimes.com/section/technology/rss.xml"
+            "WSJ": "https://feeds.content.dowjones.io/public/rss/RSSWSJD",
+            "New York Times": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+            "TechCrunch": "https://techcrunch.com/feed/",
+            "The Verge": "https://www.theverge.com/rss/index.xml"
+        }
+    },
+    "Opinion": {
+        "title": "Opinion",
+        "feeds": {
+            "WSJ": "https://feeds.content.dowjones.io/public/rss/RSSOpinion",
+            "New York Times": "https://rss.nytimes.com/services/xml/rss/nyt/sunday-review.xml",
+            "New Yorker": " https://www.newyorker.com/feed/news/daily-comment"
         }
     },
     "reddit": {

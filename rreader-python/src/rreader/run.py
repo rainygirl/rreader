@@ -182,6 +182,17 @@ def get_gemini_api_key():
             time.sleep(2)
     return api_key
 
+def apply_cached_translations(category):
+    """Apply cached translations synchronously to entries."""
+    cache = load_translation_cache()
+    if category not in data:
+        return
+    for entry in data[category]["entries"]:
+        title = entry.get("title", "")
+        if title and title in cache:
+            entry["title_original"] = title
+            entry["title"] = cache[title]
+
 # Asynchronous title translation
 def translate_all_titles_async(api_key, category, entries):
     global TRANSLATING_IN_PROGRESS
@@ -244,6 +255,7 @@ def layout(screen):
                     return
 
                 data[c_category] = d
+                apply_cached_translations(c_category)
 
                 if c_category != CURRENT["category"]:
                     return
@@ -257,6 +269,11 @@ def layout(screen):
                             break
                     CURRENT["line"] = i
                 
+                # Update rowlimit for new data
+                CONFIG["rowlimit"] = min(screen.height - 2, len(data[c_category]["entries"]))
+                if CONFIG["rowlimit"] > 999:
+                    CONFIG["rowlimit"] = 999
+
                 # Initiate batch translation for new/updated feeds
                 if GEMINI_AVAILABLE and gemini_api_key:
                     thread = threading.Thread(target=translate_all_titles_async, args=(gemini_api_key, c_category, data[c_category]["entries"]))
@@ -264,6 +281,7 @@ def layout(screen):
                     threads.append(thread)
                     thread.start()
 
+                screen.clear()
                 draw_categories()
                 draw_entries(force=True)
                 screen.refresh()
@@ -576,56 +594,75 @@ def layout(screen):
 
         if GEMINI_AVAILABLE and gemini_api_key:
             alert(screen, "SUMMARIZING WITH GEMINI...")
-            summary = summarize_with_gemini(url, gemini_api_key)
-            show_summary_modal(summary)
+            result = summarize_with_gemini(url, gemini_api_key)
+            if isinstance(result, tuple) and result[0] == "fetch_error":
+                show_summary_modal("HTTP Fetch 실패 (%s)" % result[1], url=url)
+            elif result:
+                show_summary_modal(result, url=url)
+            else:
+                webbrowser.open(url, new=2)
         else:
             webbrowser.open(url, new=2)
         return True
 
-    def show_summary_modal(summary_text):
+    def show_summary_modal(summary_text, url=None):
         # Determine the size and position of the modal
         modal_width = int(screen.width * 0.8)
         modal_height = int(screen.height * 0.8)
         start_x = (screen.width - modal_width) // 2
         start_y = (screen.height - modal_height) // 2
+        content_width = modal_width - 4  # 2 chars padding on each side
 
-        # Wrap the summary text
-        wrapped_text = wrap_text_for_display(summary_text, modal_width - 4)
-        
+        # Split by newlines first, then wrap each paragraph
+        wrapped_text = []
+        for paragraph in summary_text.split('\n'):
+            if paragraph.strip() == '':
+                wrapped_text.append('')
+            else:
+                wrapped_text.extend(wrap_text_for_display(paragraph, content_width))
+
         scroll_pos = 0
 
         while True:
-            # Clear the modal area
+            # Fill the entire modal area with background
+            fill_line = " " * modal_width
             for y in range(modal_height):
-                screen.print_at(" " * modal_width, start_x, start_y + y, bg=COLOR["categorybg"])
+                screen.print_at(fill_line, start_x, start_y + y, colour=COLOR["categoryfg"], bg=COLOR["categorybg"])
 
             # Draw the border
-            for y in range(start_y, start_y + modal_height):
+            border_h = "-" * modal_width
+            screen.print_at(border_h, start_x, start_y, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
+            screen.print_at(border_h, start_x, start_y + modal_height - 1, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
+            for y in range(start_y + 1, start_y + modal_height - 1):
                 screen.print_at("|", start_x, y, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
-                screen.print_at("|", start_x + modal_width -1, y, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
-            screen.print_at("-" * modal_width, start_x, start_y, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
-            screen.print_at("-" * modal_width, start_x, start_y + modal_height - 1, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
+                screen.print_at("|", start_x + modal_width - 1, y, colour=COLOR["categoryfgS"], bg=COLOR["categorybg"])
 
-            # Display the text
+            # Display the text - pad each line to fill content width
             for i, line in enumerate(wrapped_text[scroll_pos:]):
-                if i >= modal_height - 2:
+                if i >= modal_height - 4:
                     break
-                screen.print_at(line, start_x + 2, start_y + 1 + i, colour=COLOR["categoryfg"], bg=COLOR["categorybg"])
+                padding = max(0, content_width - text_length(line))
+                padded_line = line + " " * padding
+                screen.print_at(padded_line, start_x + 2, start_y + 1 + i, colour=COLOR["categoryfg"], bg=COLOR["categorybg"])
 
-            # Add ESC Close label
-            esc_label = "[ESC] Close"
-            esc_label_width = text_length(esc_label)
-            esc_label_x = start_x + (modal_width - esc_label_width) // 2
-            screen.print_at(esc_label, esc_label_x, start_y + modal_height - 2, colour=COLOR["categoryfgS"], bg=COLOR["categorybgS"])
-            
+            # Add bottom labels
+            bottom_label = "[ESC] Close   [O] Open URL"
+            bottom_label_width = text_length(bottom_label)
+            bottom_label_x = start_x + (modal_width - bottom_label_width) // 2
+            screen.print_at(bottom_label, bottom_label_x, start_y + modal_height - 2, colour=COLOR["categoryfgS"], bg=COLOR["categorybgS"])
+
             screen.refresh()
 
             # Wait for keypress
             keycode = screen.get_key()
             if keycode == KEY["esc"]:
                 break
+            elif keycode in KEY["o"]:
+                if url:
+                    webbrowser.open(url, new=2)
+                break
             elif keycode == KEY["down"]:
-                if scroll_pos < len(wrapped_text) - (modal_height - 2):
+                if scroll_pos < len(wrapped_text) - (modal_height - 4):
                     scroll_pos += 1
             elif keycode == KEY["up"]:
                 if scroll_pos > 0:
@@ -683,6 +720,7 @@ def layout(screen):
     CURRENT = {"line": -1, "column": -1, "category": "news"}
 
     data[CURRENT["category"]] = get_feed(CURRENT["category"])
+    apply_cached_translations(CURRENT["category"])
 
     # Initiate batch translation if not already in progress
     if GEMINI_AVAILABLE and gemini_api_key and not TRANSLATING_IN_PROGRESS:
@@ -825,6 +863,7 @@ def layout(screen):
                 alert(screen, "LOADING")
 
                 data[CURRENT["category"]] = get_feed(CURRENT["category"])
+                apply_cached_translations(CURRENT["category"])
 
                 # Initiate batch translation if not already in progress
                 if GEMINI_AVAILABLE and gemini_api_key and not TRANSLATING_IN_PROGRESS:
@@ -881,6 +920,7 @@ def layout(screen):
 
         global NEEDS_REDRAW
         if NEEDS_REDRAW:
+            draw_categories()
             draw_entries(force=True)
             screen.refresh()
             NEEDS_REDRAW = False

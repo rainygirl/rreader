@@ -34,7 +34,7 @@ dependencies = [
 gemini = [
     "google-genai",
     "requests",
-    "beautifulsoup4",
+    "html2text",
 ]
 dev = [
     "pytest>=7.0",

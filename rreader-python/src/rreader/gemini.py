@@ -3,9 +3,9 @@
 import os
 import requests
 import sys
+import html2text
 import google.genai as genai
 from google.genai import Client
-from bs4 import BeautifulSoup
 
 import json
 def translate_titles_batch(titles, api_key, cache):
@@ -74,21 +74,18 @@ def summarize_with_gemini(url, api_key):
         client = Client(api_key=api_key)
 
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
         }
-        # Fetch the content from the URL
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()  # Raise an exception for bad status codes
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
 
-        # Parse the HTML and extract text
-        soup = BeautifulSoup(response.content, "html.parser")
-        # Get text from the body, you might want to refine this selector
-        # to get only the main article content.
-        page_text = soup.body.get_text(separator='\\n', strip=True)
+        h = html2text.HTML2Text()
+        h.ignore_links = True
+        h.ignore_images = True
+        h.body_width = 0
+        page_text = h.handle(response.text)
 
-
-        # Create the prompt
-        prompt = f"Please summarize the following text in Korean, extracted from the URL {url}:\\n\\n{page_text}"
+        prompt = f"다음 글의 주요 내용만 한국어 bullet point 목록으로 정리해. 부연 설명, 재요약, 결론 문단 없이 목록만 출력해.\\n\\n{page_text}"
 
         try:
             # Generate content
@@ -107,8 +104,10 @@ def summarize_with_gemini(url, api_key):
             else:
                 return f"An error occurred: {e}"
 
-    except requests.exceptions.RequestException as e:
-        return f"Error fetching URL: {e}"
+    except requests.exceptions.HTTPError as e:
+        return ("fetch_error", e.response.status_code if e.response is not None else 0)
+    except requests.exceptions.RequestException:
+        return ("fetch_error", 0)
     except Exception as e:
         return f"An unexpected error occurred: {e}"
 
