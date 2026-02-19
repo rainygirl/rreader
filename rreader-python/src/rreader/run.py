@@ -1,14 +1,17 @@
 # -*- coding:utf-8 -*-
 
+import curses
 import json
 import os
 import re
 import sys
 import signal
 import time
+import unicodedata
 import webbrowser
 import threading
 
+from wcwidth import wcwidth as _wcwidth
 from asciimatics.screen import Screen
 from asciimatics.effects import Print
 from asciimatics.scene import Scene
@@ -126,7 +129,7 @@ FIELDS = {
     ]
 }
 
-data, CURRENT, NEEDS_REDRAW, TRANSLATING_IN_PROGRESS = {}, {}, False, False
+data, CURRENT, NEEDS_REDRAW, TRANSLATING_IN_PROGRESS, LOADING_STATUS = {}, {}, False, False, None
 
 os.environ.setdefault("ESCDELAY", "10")
 
@@ -195,26 +198,25 @@ def apply_cached_translations(category):
 
 # Asynchronous title translation
 def translate_all_titles_async(api_key, category, entries):
-    global TRANSLATING_IN_PROGRESS
+    global TRANSLATING_IN_PROGRESS, NEEDS_REDRAW
     TRANSLATING_IN_PROGRESS = True
-    
-    cache = load_translation_cache()
-    original_titles = [entry.get("title") for entry in entries if entry.get("title")]
-    
-    translated_titles = translate_titles_batch(original_titles, api_key, cache)
-    save_translation_cache(cache) # Save cache after batch translation
 
-    global data, NEEDS_REDRAW
-    if category in data:
-        for entry in data[category]["entries"]:
-            if not entry.get("title_original"):
-                entry["title_original"] = entry.get("title")
-            original_title = entry["title_original"]
-            if original_title in translated_titles:
-                entry["title"] = translated_titles[original_title]
-        NEEDS_REDRAW = True
+    try:
+        cache = load_translation_cache()
+        original_titles = [entry.get("title_original", entry.get("title")) for entry in entries if entry.get("title")]
 
-    TRANSLATING_IN_PROGRESS = False
+        translated_titles = translate_titles_batch(original_titles, api_key, cache)
+        save_translation_cache(cache)
+
+        if category in data:
+            for entry in data[category]["entries"]:
+                original_title = entry.get("title_original", entry.get("title"))
+                if original_title and original_title in translated_titles:
+                    entry["title_original"] = original_title
+                    entry["title"] = translated_titles[original_title]
+            NEEDS_REDRAW = True
+    finally:
+        TRANSLATING_IN_PROGRESS = False
 
 def layout(screen):
     global data, CURRENT, gemini_api_key, TRANSLATING_IN_PROGRESS, TRANSLATING_IN_PROGRESS
@@ -224,7 +226,7 @@ def layout(screen):
 
     def reload_data():
 
-        global data, CURRENT, translation_cache
+        global data, CURRENT, translation_cache, NEEDS_REDRAW, LOADING_STATUS
 
         while True:
 
@@ -242,15 +244,18 @@ def layout(screen):
 
                 CONFIG["loading"] = True
 
-                alert(screen, "UPDATING")
+                LOADING_STATUS = "UPDATING"
+                NEEDS_REDRAW = True
 
                 d = get_feeds_from_rss(CURRENT["category"])
 
                 CONFIG["loading"] = False
 
                 if not d:
-                    alert(screen, "Update failed")
+                    LOADING_STATUS = "Update failed"
+                    NEEDS_REDRAW = True
                     time.sleep(0.5)
+                    LOADING_STATUS = None
                     data[c_category]["created_at"] = int(time.time())
                     return
 
@@ -268,11 +273,6 @@ def layout(screen):
                             CURRENT["line"] = i
                             break
                     CURRENT["line"] = i
-                
-                # Update rowlimit for new data
-                CONFIG["rowlimit"] = min(screen.height - 2, len(data[c_category]["entries"]))
-                if CONFIG["rowlimit"] > 999:
-                    CONFIG["rowlimit"] = 999
 
                 # Initiate batch translation for new/updated feeds
                 if GEMINI_AVAILABLE and gemini_api_key:
@@ -281,23 +281,24 @@ def layout(screen):
                     threads.append(thread)
                     thread.start()
 
-                screen.clear()
-                draw_categories()
-                draw_entries(force=True)
-                screen.refresh()
+                LOADING_STATUS = None
+                NEEDS_REDRAW = True
 
-    def is_double_char(s):
+    def _char_width(c):
+        """Return display width of a character, matching asciimatics print_at logic exactly."""
+        if ord(c) >= 256:
+            w = _wcwidth(c)
+            if w > 0:
+                return w
+            if w == 0:
+                return 0
+        return 1
 
-        return (
-            re.compile(
-                "(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff]|[가-힣]|[\u4e00-\u9fff]|[\u3400-\u4dbf]|[\U00020000-\U0002a6df]|[\U0002a700-\U0002b73f]|[\U0002b740-\U0002b81f]|[\U0002b820-\U0002ceaf])"
-            ).findall(s)
-            != []
-        )
+    def is_double_char(c):
+        return _char_width(c) == 2
 
     def text_length(s):
-
-        return sum([2 if is_double_char(d) else 1 for d in s])
+        return sum(_char_width(d) for d in s)
 
     def wrap_text_for_display(text, width):
         wrapped_lines = []
@@ -401,19 +402,30 @@ def layout(screen):
 
         m = 0
         for d in s:
-            m += 1
-            if is_double_char(d):
-                m += 1
+            cw = _char_width(d)
             if not over:
+                if m + cw > l:
+                    break
                 rslt += d
+                m += cw
             else:
-                if m == shift and is_double_char(d):
+                m += cw
+                if m == shift and cw == 2:
                     rslt += " "
                 elif m >= shift:
-                    rslt += d
+                    # Check if adding this char would overshoot visible width
+                    if m > l + shift and cw == 2:
+                        rslt += " "
+                    else:
+                        rslt += d
 
-            if m >= l + shift or m >= max_width + shift:
-                break
+                if m >= l + shift or m >= max_width + shift:
+                    break
+
+        # Pad to fill the visible width so no gap remains
+        rslt_width = text_length(rslt)
+        if rslt_width < l:
+            rslt += " " * (l - rslt_width)
 
         return rslt
 
@@ -484,13 +496,13 @@ def layout(screen):
                     and f[1] + "S" in data[CURRENT["category"]]["entries"][i]
                 ):
                     txt = data[CURRENT["category"]]["entries"][i][f[1] + "S"]
-                    if f[1] in data[CURRENT["category"]]["entries"][i] and len(
+                    if f[1] in data[CURRENT["category"]]["entries"][i] and text_length(
                         data[CURRENT["category"]]["entries"][i][f[1]]
-                    ) > len(txt):
+                    ) > text_length(txt):
 
                         txt += " " * (
-                            len(data[CURRENT["category"]]["entries"][i][f[1]])
-                            - len(txt)
+                            text_length(data[CURRENT["category"]]["entries"][i][f[1]])
+                            - text_length(txt)
                         )
 
                 if txt == "":
@@ -499,7 +511,7 @@ def layout(screen):
                 col = f[0]
 
                 if col < 0:
-                    col = screen.width + col - len(txt)
+                    col = screen.width + col - text_length(txt)
                 elif CURRENT.get("input", False):
                     col += 4
 
@@ -515,8 +527,8 @@ def layout(screen):
                 if is_selected and f[1] in CONFIG["marqueeFields"]:
                     txt = slice_text(
                         txt,
-                        screen.width - col - 1,
-                        max_width=screen.width - col,
+                        screen.width - col - 3,
+                        max_width=screen.width - col - 2,
                         shift=CURRENT["shift"],
                     )
 
@@ -526,6 +538,12 @@ def layout(screen):
 
                 if len(f) > 3:
                     txt += " " * 20
+
+                # For selected rows, extend right-aligned fields (date) with
+                # a 2-space safe-gap on the left so no dark gap can appear
+                if is_selected and f[0] < 0:
+                    txt = "  " + txt
+                    col -= 2
 
                 try:
                     screen.print_at(txt, col, row, colour=fg, bg=bg)
@@ -606,24 +624,35 @@ def layout(screen):
         return True
 
     def show_summary_modal(summary_text, url=None):
-        # Determine the size and position of the modal
-        modal_width = int(screen.width * 0.8)
-        modal_height = int(screen.height * 0.8)
-        start_x = (screen.width - modal_width) // 2
-        start_y = (screen.height - modal_height) // 2
-        content_width = modal_width - 4  # 2 chars padding on each side
-
-        # Split by newlines first, then wrap each paragraph
-        wrapped_text = []
-        for paragraph in summary_text.split('\n'):
-            if paragraph.strip() == '':
-                wrapped_text.append('')
-            else:
-                wrapped_text.extend(wrap_text_for_display(paragraph, content_width))
-
         scroll_pos = 0
+        prev_width = -1
+        prev_height = -1
+        wrapped_text = []
 
         while True:
+            # Recalculate layout on resize or first run
+            if screen.width != prev_width or screen.height != prev_height:
+                prev_width = screen.width
+                prev_height = screen.height
+                modal_width = int(screen.width * 0.8)
+                modal_height = int(screen.height * 0.8)
+                start_x = (screen.width - modal_width) // 2
+                start_y = (screen.height - modal_height) // 2
+                content_width = modal_width - 4  # 2 chars padding on each side
+
+                wrapped_text = []
+                for paragraph in summary_text.split('\n'):
+                    if paragraph.strip() == '':
+                        wrapped_text.append('')
+                    else:
+                        wrapped_text.extend(wrap_text_for_display(paragraph, content_width))
+
+                scroll_pos = min(scroll_pos, max(0, len(wrapped_text) - (modal_height - 4)))
+                screen.clear()
+
+            if screen.has_resized():
+                break
+
             # Fill the entire modal area with background
             fill_line = " " * modal_width
             for y in range(modal_height):
@@ -667,7 +696,7 @@ def layout(screen):
             elif keycode == KEY["up"]:
                 if scroll_pos > 0:
                     scroll_pos -= 1
-        
+
         # Redraw the main screen after closing the modal
         draw_categories()
         draw_entries(force=True)
@@ -675,7 +704,6 @@ def layout(screen):
 
 
     def show_help():
-        w = 60
         s = """
             [Up], [Down], [W], [S], [J], [K] : Select from list
 [Shift]+[Up], [Shift]+[Down], [PgUp], [PgDn] : Quickly select from list
@@ -705,13 +733,12 @@ def layout(screen):
             )
 
         screen.refresh()
-        idx = 0
         while True:
+            if screen.has_resized():
+                return
             if screen.get_key():
                 return
             time.sleep(0.5)
-
-        screen.clear()
 
     reload_loop = threading.Thread(target=reload_data, args=[])
     reload_loop.daemon = True
@@ -721,12 +748,6 @@ def layout(screen):
 
     data[CURRENT["category"]] = get_feed(CURRENT["category"])
     apply_cached_translations(CURRENT["category"])
-
-    # Initiate batch translation if not already in progress
-    if GEMINI_AVAILABLE and gemini_api_key and not TRANSLATING_IN_PROGRESS:
-        thread = threading.Thread(target=translate_all_titles_async, args=(gemini_api_key, CURRENT["category"], data[CURRENT["category"]]["entries"]))
-        thread.daemon = True
-        thread.start()
 
     CONFIG["rowlimit"] = screen.height - 2
 
@@ -740,6 +761,12 @@ def layout(screen):
     draw_categories()
     draw_entries(force=True)
     screen.refresh()
+
+    # Start async translation after display
+    if GEMINI_AVAILABLE and gemini_api_key:
+        thread = threading.Thread(target=translate_all_titles_async, args=(gemini_api_key, CURRENT["category"], data[CURRENT["category"]]["entries"]))
+        thread.daemon = True
+        thread.start()
 
     current_time = int(time.time() * CONFIG["marqueeSpeed"])
 
@@ -790,7 +817,7 @@ def layout(screen):
             elif keycode in KEY["r"]:
                 CURRENT["line"] = -1
                 data[CURRENT["category"]] = get_feed(CURRENT["category"])
-                CONFIG["rowlimit"] = screen.height - 1
+                CONFIG["rowlimit"] = screen.height - 2
                 if len(data[CURRENT["category"]]["entries"]) < CONFIG["rowlimit"]:
                     CONFIG["rowlimit"] = len(data[CURRENT["category"]]["entries"])
                 draw_entries()
@@ -865,15 +892,9 @@ def layout(screen):
                 data[CURRENT["category"]] = get_feed(CURRENT["category"])
                 apply_cached_translations(CURRENT["category"])
 
-                # Initiate batch translation if not already in progress
-                if GEMINI_AVAILABLE and gemini_api_key and not TRANSLATING_IN_PROGRESS:
-                    thread = threading.Thread(target=translate_all_titles_async, args=(gemini_api_key, CURRENT["category"], data[CURRENT["category"]]["entries"]))
-                    thread.daemon = True
-                    thread.start()
-
                 CURRENT["line"] = -1
                 CURRENT["oline"] = -1
-                CONFIG["rowlimit"] = screen.height - 1
+                CONFIG["rowlimit"] = screen.height - 2
                 if (
                     CURRENT["category"] in data
                     and len(data[CURRENT["category"]]["entries"]) < CONFIG["rowlimit"]
@@ -883,6 +904,12 @@ def layout(screen):
                 draw_categories()
                 draw_entries(force=True)
                 screen.refresh()
+
+                # Start async translation after display
+                if GEMINI_AVAILABLE and gemini_api_key:
+                    thread = threading.Thread(target=translate_all_titles_async, args=(gemini_api_key, CURRENT["category"], data[CURRENT["category"]]["entries"]))
+                    thread.daemon = True
+                    thread.start()
 
             if CURRENT["line"] > -1:
                 CURRENT["id"] = data[CURRENT["category"]]["entries"][
@@ -918,19 +945,36 @@ def layout(screen):
         if screen.has_resized():
             return False
 
-        global NEEDS_REDRAW
+        global NEEDS_REDRAW, LOADING_STATUS
         if NEEDS_REDRAW:
+            NEEDS_REDRAW = False
+            # Recalculate rowlimit for current screen size and data
+            if CURRENT["category"] in data:
+                CONFIG["rowlimit"] = min(screen.height - 2, len(data[CURRENT["category"]]["entries"]))
+                if CONFIG["rowlimit"] > 999:
+                    CONFIG["rowlimit"] = 999
             draw_categories()
             draw_entries(force=True)
+            if LOADING_STATUS:
+                alert(screen, LOADING_STATUS)
             screen.refresh()
-            NEEDS_REDRAW = False
 
 
 
+
+
+def _restore_terminal():
+    try:
+        curses.endwin()
+    except Exception:
+        pass
+    sys.stdout.write("\033[?25h")  # Show cursor (ANSI escape)
+    sys.stdout.flush()
 
 
 def do():
     def signal_handler(sig, frame):
+        _restore_terminal()
         sys.exit("Bye")
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -951,9 +995,12 @@ def do():
     else:
         gemini_api_key = None
 
-    while True:
-        if Screen.wrapper(layout):
-            break
+    try:
+        while True:
+            if Screen.wrapper(layout):
+                break
+    finally:
+        _restore_terminal()
 
     sys.stdout.write("Bye\n")
 

@@ -424,6 +424,8 @@ struct App {
     // Summary modal
     show_modal: bool,
     modal_text: Vec<String>,
+    modal_raw_text: String,
+    modal_wrapped_width: u16,
     modal_scroll: usize,
     summarizing: bool,
     summarize_url: String,
@@ -500,6 +502,8 @@ impl App {
             pending_translations: Arc::new(Mutex::new(HashMap::new())),
             show_modal: false,
             modal_text: Vec::new(),
+            modal_raw_text: String::new(),
+            modal_wrapped_width: 0,
             modal_scroll: 0,
             summarizing: false,
             summarize_url: String::new(),
@@ -1103,6 +1107,8 @@ impl App {
 
         let width = (self.terminal_width as f32 * 0.8) as usize;
         let content_width = width.saturating_sub(4).max(10);
+        self.modal_raw_text = summary.clone();
+        self.modal_wrapped_width = self.terminal_width;
         self.modal_text = wrap_text_for_display(&summary, content_width);
         self.modal_scroll = 0;
         self.show_modal = true;
@@ -1200,12 +1206,13 @@ fn slice_text_marquee(
             out_w += 1;
         }
 
-        result.push(c);
-        out_w += cw;
-
-        if out_w >= max_w {
+        // Check if this char fits before adding
+        if out_w + cw > max_w {
             break;
         }
+
+        result.push(c);
+        out_w += cw;
     }
 
     // Pad if needed
@@ -1351,7 +1358,7 @@ fn render_entries(f: &mut Frame, app: &mut App) {
         let title_col = TITLE_COL + col_offset;
         let pub_date_len = display_width(pub_date) as u16 + 2;
         let title_max_width =
-            (width.saturating_sub(title_col + pub_date_len + 1)) as usize;
+            (width.saturating_sub(title_col + pub_date_len)) as usize;
 
         let title_text = if is_selected {
             slice_text_marquee(
@@ -1589,6 +1596,17 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     // Modal overlay
     if app.show_modal {
+        // Re-wrap modal text if terminal width changed
+        if app.modal_wrapped_width != app.terminal_width && !app.modal_raw_text.is_empty() {
+            let width = (app.terminal_width as f32 * 0.8) as usize;
+            let content_width = width.saturating_sub(4).max(10);
+            app.modal_text = wrap_text_for_display(&app.modal_raw_text, content_width);
+            app.modal_wrapped_width = app.terminal_width;
+            let max_scroll = app.modal_text.len().saturating_sub(
+                ((app.terminal_height as f32 * 0.8) as usize).saturating_sub(3),
+            );
+            app.modal_scroll = app.modal_scroll.min(max_scroll);
+        }
         render_modal(f, app);
     }
 }
@@ -1629,6 +1647,8 @@ fn main() -> Result<()> {
                         KeyCode::Esc => {
                             app.show_modal = false;
                             app.modal_text.clear();
+                            app.modal_raw_text.clear();
+                            app.modal_wrapped_width = 0;
                             app.modal_scroll = 0;
                         }
                         KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
