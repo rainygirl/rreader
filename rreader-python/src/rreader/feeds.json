@@ -1,4 +1,29 @@
 {
+    "tech": {
+        "title": "Tech",
+        "feeds": {
+            "WIRED AI": "https://www.wired.com/feed/tag/ai/latest/rss",
+            "WIRED Culture": "https://www.wired.com/feed/category/culture/latest/rss",
+            "WIRED Gear": "https://www.wired.com/feed/category/gear/latest/rss",
+            "WIRED Ideas": "https://www.wired.com/feed/category/ideas/latest/rss",
+            "WIRED Science": "https://www.wired.com/feed/category/science/latest/rss",
+            "WIRED Security": "https://www.wired.com/feed/category/security/latest/rss",
+            "WIRED Back": "https://www.wired.com/feed/category/backchannel/latest/rss",
+            "WIRED Guides": "https://www.wired.com/feed/tag/wired-guide/latest/rss",
+            "WIRED Japan": "https://wired.jp/rssfeeder/",
+            "WIRED Italia": "https://www.wired.it/feed/rss",
+            "Y Combinator": "https://news.ycombinator.com/rss",
+            "BBC": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+            "WSJ": "https://feeds.content.dowjones.io/public/rss/RSSWSJD",
+            "New York Times": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+            "TechCrunch": "https://techcrunch.com/feed/",
+            "The Verge": "https://www.theverge.com/rss/index.xml",
+            "Ars Technica": "https://feeds.arstechnica.com/arstechnica/index",
+            "MIT Technology Review": "https://www.technologyreview.com/feed/",
+            "Engadget": "https://www.engadget.com/rss.xml",
+            "NHK": "https://news.web.nhk/n-data/conf/na/rss/cat3.xml"
+        }
+    },
     "news": {
         "title": "Top News",
         "feeds": {
@@ -11,7 +36,11 @@
             "SCMP": "https://www.scmp.com/rss/91/feed",
             "New Yorker": "https://www.newyorker.com/feed/news",
             "Vox": "https://www.vox.com/rss/index.xml",
-            "Independent": "https://www.independent.co.uk/news/world/rss"
+            "Independent": "https://www.independent.co.uk/news/world/rss",
+            "Axios": "https://api.axios.com/feed/",
+            "The Atlantic": "https://www.theatlantic.com/feed/all/",
+            "NHK": "https://news.web.nhk/n-data/conf/na/rss/cat6.xml",
+            "Financial Times": "https://www.ft.com/world?format=rss"
         }
     },
     "business": {
@@ -22,25 +51,6 @@
             "WSJ": "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain",
             "WIRED": "https://www.wired.com/feed/category/business/latest/rss",
             "Financial Times": "https://www.ft.com/rss/home/international"
-        }
-    },
-    "tech": {
-        "title": "Tech",
-        "feeds": {
-            "WIRED AI": "https://www.wired.com/feed/tag/ai/latest/rss",
-            "WIRED Culture": "https://www.wired.com/feed/category/culture/latest/rss",
-            "WIRED Gear": "https://www.wired.com/feed/category/gear/latest/rss",
-            "WIRED Ideas": "https://www.wired.com/feed/category/ideas/latest/rss",
-            "WIRED Science": "https://www.wired.com/feed/category/science/latest/rss",
-            "WIRED Security": "https://www.wired.com/feed/category/security/latest/rss",
-            "WIRED Back": "https://www.wired.com/feed/category/backchannel/latest/rss",
-            "WIRED Guides": "https://www.wired.com/feed/tag/wired-guide/latest/rss",
-            "Y Combinator": "https://news.ycombinator.com/rss",
-            "BBC": "http://feeds.bbci.co.uk/news/technology/rss.xml",
-            "WSJ": "https://feeds.content.dowjones.io/public/rss/RSSWSJD",
-            "New York Times": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
-            "TechCrunch": "https://techcrunch.com/feed/",
-            "The Verge": "https://www.theverge.com/rss/index.xml"
         }
     },
     "Opinion": {
