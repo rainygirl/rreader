@@ -1,0 +1,5 @@
+# rreader-web: regenerate static HTML every hour
+# Edit with: crontab -e
+# Then add the line below (adjust paths):
+
+0 * * * * python3 generate.py >> /tmp/rreader-web.log 2>&1
