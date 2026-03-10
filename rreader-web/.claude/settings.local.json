@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"adsbygoogle\\\\|adsense\\\\|ca-pub\" /Users/rainygirl/Workspace/github/rreader/rreader-web --include=\"*.html\" --include=\"*.tsx\" --include=\"*.ts\" --include=\"*.jsx\" --include=\"*.js\" -n 2>/dev/null | head -40)",
+      "Bash(python3 generate.py 2>&1 | tail -10)",
+      "Bash(open /Users/rainygirl/Workspace/github/rreader/rreader-web/output/index.html)",
+      "Bash(chmod +x /Users/rainygirl/Workspace/github/rreader/rreader-web/run.sh)",
+      "Bash(uv run:*)"
+    ]
+  }
+}

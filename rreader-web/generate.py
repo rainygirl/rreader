@@ -518,7 +518,8 @@ def generate_html(all_data, generated_at):
     }}
     @media (max-width: 900px) {{ .cards {{ grid-template-columns: repeat(2, 1fr); }} }}
     @media (max-width: 600px) {{ .cards {{ grid-template-columns: 1fr; gap: 14px 8px; padding: 8px 8px 16px; }} }}
-    .ad-card {{ }}
+    .ad-card {{ overflow: hidden; min-width: 0; }}
+    .ad-card ins {{ max-width: 100% !important; }}
     .ad-list {{ padding: 8px 16px; }}
 
     .group-card {{
@@ -528,6 +529,7 @@ def generate_html(all_data, generated_at):
       overflow: hidden;
       padding-bottom: 10px;
       transition: box-shadow 0.15s, border-color 0.15s;
+      min-width: 0;
     }}
     .group-card:hover {{ box-shadow: 0 3px 14px rgba(0,0,0,0.09); border-color: #d5d5d5; }}
 
@@ -567,6 +569,7 @@ def generate_html(all_data, generated_at):
     }}
     .group-top-title {{
       flex: 1;
+      min-width: 0;
       font-size: 14px;
       font-weight: 600;
       line-height: 1.55;
