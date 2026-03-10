@@ -362,13 +362,6 @@ def generate_html(all_data, generated_at):
     gtag('config', 'G-V5TYZ73NS2');
   </script>
   <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2939993747600082" crossorigin="anonymous"></script>
-  <script>
-    (adsbygoogle = window.adsbygoogle || []).push({{
-      google_ad_client: "ca-pub-2939993747600082",
-      enable_page_level_ads: false,
-      overlays: {{bottom: false}}
-    }});
-  </script>
   <style>
     *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
     a {{ letter-spacing: -0.5px; }}
