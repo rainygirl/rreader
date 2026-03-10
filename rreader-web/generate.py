@@ -348,6 +348,14 @@ def generate_html(all_data, generated_at):
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>rreader</title>
+  <!-- news.coroke.net용 코드이니 재활용시 삭제하세요 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-V5TYZ73NS2"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){{dataLayer.push(arguments);}}
+    gtag('js', new Date());
+    gtag('config', 'G-V5TYZ73NS2');
+  </script>
   <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2939993747600082" crossorigin="anonymous"></script>
   <style>
     *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -669,7 +677,7 @@ def generate_html(all_data, generated_at):
 <body>
   <header>
     <div class="header-inner">
-      <span class="logo">rreader</span>
+      <span class="logo">news.coroke.net</span>
       <nav class="tab-nav">{tabs_html}</nav>
       <span class="header-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></span>
       <div class="view-pill">

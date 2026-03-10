@@ -19,10 +19,78 @@ rreader/
 ├── rreader-python/    # Python 구현
 │   ├── pyproject.toml
 │   └── src/rreader/
-└── rreader-rust/      # Rust 구현
-    ├── Cargo.toml
-    └── src/
+├── rreader-rust/      # Rust 구현
+│   ├── Cargo.toml
+│   └── src/
+└── rreader-web/       # 정적 HTML 생성기
+    ├── generate.py
+    └── feeds.json
 ```
+
+## rreader-web
+
+RSS 피드를 수집하고 Gemini API로 제목을 한국어로 번역한 뒤, 정적 HTML 페이지를 생성하는 웹 버전입니다. [news.coroke.net](https://news.coroke.net)에서 실제로 운영 중입니다.
+
+### 특징
+
+- **카드 뷰 / 목록 뷰** 전환 지원
+- **소스별 그룹핑**: 카드 뷰에서 출처별로 최신 기사를 묶어 표시
+- **썸네일 자동 수집**: RSS 피드 및 og:image 크롤링
+- **번역 캐시**: 기사 URL 기준으로 번역 결과를 캐싱하여 API 호출 최소화
+- **크론 연동**: 매시간 자동 실행에 최적화
+
+### 실행 방법
+
+```bash
+cd rreader-web
+
+# 의존성 설치
+pip install feedparser google-genai
+
+# Gemini API 키 설정 (번역 기능 사용 시)
+echo '{"GEMINI_API_KEY": "your-key-here"}' > ~/.rreader_gemini_config.json
+
+# 실행
+python generate.py
+
+# 생성된 파일 확인
+open output/index.html
+```
+
+크론 등록 예시 (매시간 실행):
+
+```
+0 * * * * cd /path/to/rreader-web && python generate.py
+```
+
+### RSS 피드 설정
+
+`feeds.json` 파일에서 카테고리와 피드를 설정합니다:
+
+```json
+{
+    "tech": {
+        "title": "Tech",
+        "feeds": {
+            "Hacker News": "https://news.ycombinator.com/rss",
+            "TechCrunch": "https://techcrunch.com/feed/"
+        }
+    },
+    "news": {
+        "title": "Top News",
+        "feeds": {
+            "BBC": "http://feeds.bbci.co.uk/news/rss.xml",
+            "CNN": "http://rss.cnn.com/rss/cnn_topstories.rss"
+        }
+    }
+}
+```
+
+### 주의사항
+
+- `generate.py` 내에 **Google Analytics(GA4)** 및 **Google AdSense** 코드가 포함되어 있습니다. 이는 [news.coroke.net](https://news.coroke.net) 전용 코드입니다. **재활용 시 반드시 해당 코드를 삭제하거나 본인의 코드로 교체하세요.** 해당 위치는 코드 내 주석(`<!-- news.coroke.net용 코드이니 재활용시 삭제하세요 -->`)으로 표시되어 있습니다.
+- Gemini API 키가 없으면 번역 없이 원문 제목으로 생성됩니다.
+- og:image 수집 시 외부 요청이 발생하므로 네트워크 환경에 따라 시간이 걸릴 수 있습니다.
 
 ## 설치
 
