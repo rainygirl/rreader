@@ -446,6 +446,7 @@ def generate_html(all_data, generated_at):
     @media (max-width: 600px) {{
       .header-credit {{ display: none; }}
       .mobile-credit {{ display: block; }}
+      #logo {{ display: none; }}
     }}
 
     /* ── Pill toggle ── */
@@ -612,7 +613,7 @@ def generate_html(all_data, generated_at):
     .list {{ display: flex; flex-direction: column; }}
     .list-row {{
       display: flex;
-      align-items: baseline;
+      align-items: center;
       gap: 10px;
       padding: 10px 16px;
       border-bottom: 1px solid #efefef;
