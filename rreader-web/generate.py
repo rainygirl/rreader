@@ -347,6 +347,7 @@ def generate_html(all_data, generated_at):
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>news.coroke.net</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <meta property="og:title" content="news.coroke.net" />
   <meta property="og:site_name" content="news.coroke.net" />
   <meta property="og:description" content="전세계 IT, AI, 기술, 국제뉴스를 한국어로" />
