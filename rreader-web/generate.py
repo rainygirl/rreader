@@ -245,8 +245,7 @@ ADSENSE_UNIT = """<ins class="adsbygoogle"
      data-ad-client="ca-pub-2939993747600082"
      data-ad-slot="7719574153"
      data-ad-format="auto"
-     data-full-width-responsive="true"></ins>
-<script>(adsbygoogle = window.adsbygoogle || []).push({});</script>"""
+     data-full-width-responsive="true"></ins>"""
 
 def esc(s):
     return html.escape(str(s) if s else "")
@@ -697,9 +696,15 @@ def generate_html(all_data, generated_at):
 
   function showPane() {{
     document.querySelectorAll('.pane').forEach(function(el) {{
-      el.style.display =
-        (el.dataset.cat === currentCat && el.dataset.view === currentView)
-          ? '' : 'none';
+      var visible = el.dataset.cat === currentCat && el.dataset.view === currentView;
+      el.style.display = visible ? '' : 'none';
+      if (visible) {{
+        el.querySelectorAll('ins.adsbygoogle').forEach(function(ins) {{
+          if (!ins.dataset.adsbygoogleStatus) {{
+            (adsbygoogle = window.adsbygoogle || []).push({{}});
+          }}
+        }});
+      }}
     }});
   }}
 
