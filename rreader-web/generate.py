@@ -326,8 +326,8 @@ def generate_html(all_data, generated_at):
             except Exception:
                 ldomain = ""
             lfavicon = f'<img class="list-favicon" src="https://www.google.com/s2/favicons?domain={ldomain}&sz=32" alt="" onerror="this.style.display=\'none\'">' if ldomain else ""
-            if False:
-                rows += f'\n        <div class="ad-list">{ADSENSE_UNIT}</div>'
+            if i in (6, 12):
+                rows += '\n        <div class="ad-list"><ins class="adsbygoogle" style="display:block" data-ad-format="fluid" data-ad-layout-key="-fb+5w+4e-db+86" data-ad-client="ca-pub-2939993747600082" data-ad-slot="1893036982"></ins></div>'
             rows += f"""
         <a class="list-row" href="{esc(e['url'])}" target="_blank" rel="noopener">
           <span class="list-num">{i}</span>
@@ -682,7 +682,7 @@ def generate_html(all_data, generated_at):
 <body>
   <header>
     <div class="header-inner">
-      <span class="logo">news.coroke.net</span>
+      <span class="logo" id="logo" style="cursor:pointer">news.coroke.net</span>
       <nav class="tab-nav">{tabs_html}</nav>
       <span class="header-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></span>
       <div class="view-pill">
@@ -694,7 +694,7 @@ def generate_html(all_data, generated_at):
   <div class="mobile-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></div>
   <main>{sections}
   </main>
-  <footer>데이터 소스: 각 매체 RSS<br>번역: Gemini<br><br><a href="https://python.org/" target="_blank" rel="noopener">Powered by Python</a><br>소스코드: <a href="https://github.com/rainygirl/rreader" target="_blank" rel="noopener">github.com/rainygirl/rreader</a></footer>
+  <footer>데이터 소스: 각 매체 공개 RSS / 한국어 번역: Gemini<br><br><a href="https://python.org/" target="_blank" rel="noopener">Powered by Python</a><br>소스코드: <a href="https://github.com/rainygirl/rreader" target="_blank" rel="noopener">github.com/rainygirl/rreader</a><br><br>개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></footer>
   <script>
 (function() {{
   var currentCat = '{all_data[0][0]}';
@@ -713,6 +713,16 @@ def generate_html(all_data, generated_at):
       }}
     }});
   }}
+
+  // Logo → card view of first tab
+  document.getElementById('logo').addEventListener('click', function() {{
+    currentCat = '{all_data[0][0]}';
+    currentView = 'card';
+    document.querySelectorAll('.tab-nav a').forEach(function(x) {{ x.classList.remove('active'); }});
+    document.querySelector('.tab-nav a[data-cat="{all_data[0][0]}"]').classList.add('active');
+    updatePill();
+    showPane();
+  }});
 
   // Tab nav
   document.querySelectorAll('.tab-nav a').forEach(function(a) {{
