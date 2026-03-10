@@ -326,7 +326,7 @@ def generate_html(all_data, generated_at):
             except Exception:
                 ldomain = ""
             lfavicon = f'<img class="list-favicon" src="https://www.google.com/s2/favicons?domain={ldomain}&sz=32" alt="" onerror="this.style.display=\'none\'">' if ldomain else ""
-            if i == 7:
+            if False:
                 rows += f'\n        <div class="ad-list">{ADSENSE_UNIT}</div>'
             rows += f"""
         <a class="list-row" href="{esc(e['url'])}" target="_blank" rel="noopener">
@@ -355,7 +355,7 @@ def generate_html(all_data, generated_at):
     gtag('js', new Date());
     gtag('config', 'G-V5TYZ73NS2');
   </script>
-  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2939993747600082" crossorigin="anonymous"></script>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2939993747600082" crossorigin="anonymous" data-overlays-enabled="false"></script>
   <style>
     *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
     a {{ letter-spacing: -0.5px; }}
