@@ -709,6 +709,8 @@ def generate_html(all_data, generated_at):
     pane.querySelectorAll('ins.adsbygoogle').forEach(function(ins) {{
       if (ins.dataset.adsbygoogleStatus) return;
       if (ins.offsetWidth >= 250) {{
+        var fresh = ins.cloneNode(false);
+        ins.parentNode.replaceChild(fresh, ins);
         (window.adsbygoogle = window.adsbygoogle || []).push({{}});
       }} else {{
         hasPending = true;
