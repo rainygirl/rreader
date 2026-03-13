@@ -710,13 +710,13 @@ def generate_html(all_data, generated_at):
       el.style.display = visible ? '' : 'none';
       if (visible) {{
         var pane = el;
-        requestAnimationFrame(function() {{
+        setTimeout(function() {{
           pane.querySelectorAll('ins.adsbygoogle').forEach(function(ins) {{
             if (!ins.dataset.adsbygoogleStatus) {{
               (window.adsbygoogle = window.adsbygoogle || []).push({{}});
             }}
           }});
-        }});
+        }}, 0);
       }}
     }});
   }}
