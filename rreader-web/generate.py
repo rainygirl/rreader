@@ -709,10 +709,13 @@ def generate_html(all_data, generated_at):
       var visible = el.dataset.cat === currentCat && el.dataset.view === currentView;
       el.style.display = visible ? '' : 'none';
       if (visible) {{
-        el.querySelectorAll('ins.adsbygoogle').forEach(function(ins) {{
-          if (!ins.dataset.adsbygoogleStatus) {{
-            (window.adsbygoogle = window.adsbygoogle || []).push({{}});
-          }}
+        var pane = el;
+        requestAnimationFrame(function() {{
+          pane.querySelectorAll('ins.adsbygoogle').forEach(function(ins) {{
+            if (!ins.dataset.adsbygoogleStatus) {{
+              (window.adsbygoogle = window.adsbygoogle || []).push({{}});
+            }}
+          }});
         }});
       }}
     }});
