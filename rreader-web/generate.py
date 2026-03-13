@@ -711,7 +711,7 @@ def generate_html(all_data, generated_at):
       if (visible) {{
         el.querySelectorAll('ins.adsbygoogle').forEach(function(ins) {{
           if (!ins.dataset.adsbygoogleStatus) {{
-            (adsbygoogle = window.adsbygoogle || []).push({{}});
+            (window.adsbygoogle = window.adsbygoogle || []).push({{}});
           }}
         }});
       }}
@@ -726,6 +726,7 @@ def generate_html(all_data, generated_at):
     document.querySelector('.tab-nav a[data-cat="{all_data[0][0]}"]').classList.add('active');
     updatePill();
     showPane();
+    window.scrollTo(0, 0);
   }});
 
   // Tab nav
@@ -736,6 +737,7 @@ def generate_html(all_data, generated_at):
       document.querySelectorAll('.tab-nav a').forEach(function(x) {{ x.classList.remove('active'); }});
       this.classList.add('active');
       showPane();
+      window.scrollTo(0, 0);
     }});
   }});
 
@@ -758,6 +760,7 @@ def generate_html(all_data, generated_at):
       currentView = this.dataset.view;
       updatePill();
       showPane();
+      window.scrollTo(0, 0);
     }});
   }});
   // Init pill on load and resize
