@@ -711,6 +711,7 @@ def generate_html(all_data, generated_at):
       if (ins.offsetWidth >= 250) {{
         var fresh = ins.cloneNode(false);
         ins.parentNode.replaceChild(fresh, ins);
+        void fresh.offsetWidth; // force reflow so AdSense can measure width correctly
         (window.adsbygoogle = window.adsbygoogle || []).push({{}});
       }} else {{
         hasPending = true;
