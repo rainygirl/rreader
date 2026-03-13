@@ -704,19 +704,27 @@ def generate_html(all_data, generated_at):
   var currentCat = '{all_data[0][0]}';
   var currentView = 'card';
 
+  function pushPaneAds(pane, retries) {{
+    var hasPending = false;
+    pane.querySelectorAll('ins.adsbygoogle').forEach(function(ins) {{
+      if (ins.dataset.adsbygoogleStatus) return;
+      if (ins.offsetWidth >= 250) {{
+        (window.adsbygoogle = window.adsbygoogle || []).push({{}});
+      }} else {{
+        hasPending = true;
+      }}
+    }});
+    if (hasPending && retries > 0) {{
+      setTimeout(function() {{ pushPaneAds(pane, retries - 1); }}, 150);
+    }}
+  }}
+
   function showPane() {{
     document.querySelectorAll('.pane').forEach(function(el) {{
       var visible = el.dataset.cat === currentCat && el.dataset.view === currentView;
       el.style.display = visible ? '' : 'none';
       if (visible) {{
-        var pane = el;
-        setTimeout(function() {{
-          pane.querySelectorAll('ins.adsbygoogle').forEach(function(ins) {{
-            if (!ins.dataset.adsbygoogleStatus) {{
-              (window.adsbygoogle = window.adsbygoogle || []).push({{}});
-            }}
-          }});
-        }}, 0);
+        pushPaneAds(el, 5);
       }}
     }});
   }}
