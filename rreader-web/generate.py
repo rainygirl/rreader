@@ -200,7 +200,13 @@ def translate_entries(entries, api_key, url_cache):
     if need_translation and api_key:
         titles = [e["title"] for e in need_translation]
         print(f"  Translating {len(titles)} new titles...", end=" ", flush=True)
-        translations = _translate_batch(titles, api_key)
+        translations = {}
+        for attempt in range(3):
+            translations = _translate_batch(titles, api_key)
+            if translations and any('\uAC00' <= c <= '\uD7A3' for v in translations.values() for c in v):
+                break
+            if attempt < 2:
+                print(f"retry {attempt + 1}...", end=" ", flush=True)
         print("OK" if translations else "FAIL")
         for entry in need_translation:
             translated = translations.get(entry["title"])
