@@ -31,11 +31,12 @@ FEEDS_FILE = BASE_DIR / "feeds.json"
 GEMINI_CONFIG_FILE = Path.home() / ".rreader_gemini_config.json"
 
 CATEGORIES = ["tech", "news"]
-CARD_PER_SOURCE = 4   # articles per source in card view
-LIST_MAX = 50         # total articles in list view
+CARD_PER_SOURCE = 4  # articles per source in card view
+LIST_MAX = 50  # total articles in list view
 TIMEZONE = datetime.timezone(datetime.timedelta(hours=9))
 
 # ─── API Key ──────────────────────────────────────────────────────────────────
+
 
 def get_gemini_api_key():
     if GEMINI_CONFIG_FILE.exists():
@@ -45,7 +46,9 @@ def get_gemini_api_key():
                 return key
     return os.environ.get("GEMINI_API_KEY")
 
+
 # ─── Cache ────────────────────────────────────────────────────────────────────
+
 
 def load_cache():
     if CACHE_FILE.exists():
@@ -53,10 +56,12 @@ def load_cache():
             return json.load(f)
     return {}
 
+
 def save_cache(cache):
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
+
 
 def load_og_cache():
     if OG_CACHE_FILE.exists():
@@ -64,12 +69,15 @@ def load_og_cache():
             return json.load(f)
     return {}
 
+
 def save_og_cache(cache):
     OG_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(OG_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
+
 # ─── RSS Fetching ─────────────────────────────────────────────────────────────
+
 
 def fetch_category(feeds_config):
     """Fetch RSS feeds and return entries sorted newest first."""
@@ -85,9 +93,8 @@ def fetch_category(feeds_config):
 
         for feed in d.entries:
             try:
-                parsed_time = (
-                    getattr(feed, "published_parsed", None)
-                    or getattr(feed, "updated_parsed", None)
+                parsed_time = getattr(feed, "published_parsed", None) or getattr(
+                    feed, "updated_parsed", None
                 )
                 if not parsed_time:
                     continue
@@ -110,7 +117,9 @@ def fetch_category(feeds_config):
                 thumbnail = feed.media_thumbnail[0].get("url")
             elif hasattr(feed, "media_content") and feed.media_content:
                 for m in feed.media_content:
-                    if m.get("medium") == "image" or m.get("type", "").startswith("image/"):
+                    if m.get("medium") == "image" or m.get("type", "").startswith(
+                        "image/"
+                    ):
                         thumbnail = m.get("url")
                         break
             elif hasattr(feed, "links"):
@@ -119,8 +128,8 @@ def fetch_category(feeds_config):
                         thumbnail = link.get("href")
                         break
 
-            clean_title = re.sub(r'<[^>]+>', '', html.unescape(feed.title)).strip()
-            if '퀴즈' in clean_title:
+            clean_title = re.sub(r"<[^>]+>", "", html.unescape(feed.title)).strip()
+            if "퀴즈" in clean_title:
                 continue
 
             entries[ts] = {
@@ -134,21 +143,31 @@ def fetch_category(feeds_config):
 
     return sorted(entries.values(), key=lambda x: x["timestamp"], reverse=True)
 
+
 # ─── OG Image ─────────────────────────────────────────────────────────────────
+
 
 def _fetch_og_image(url):
     """Fetch og:image from a URL. Returns image URL string or None."""
     try:
         import urllib.request
+
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=6) as resp:
             chunk = resp.read(32768).decode("utf-8", errors="ignore")
-        m = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', chunk)
+        m = re.search(
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            chunk,
+        )
         if not m:
-            m = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', chunk)
+            m = re.search(
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+                chunk,
+            )
         return m.group(1).strip() if m else None
     except Exception:
         return None
+
 
 def fetch_og_images(entries, og_cache):
     """
@@ -158,7 +177,11 @@ def fetch_og_images(entries, og_cache):
     """
     import concurrent.futures
 
-    need = [e for e in entries if not e.get("thumbnail") and e["url"] and e["url"] not in og_cache]
+    need = [
+        e
+        for e in entries
+        if not e.get("thumbnail") and e["url"] and e["url"] not in og_cache
+    ]
     if not need:
         # Apply cached values
         for e in entries:
@@ -184,7 +207,9 @@ def fetch_og_images(entries, og_cache):
     found = sum(1 for e in need if og_cache.get(e["url"]))
     print(f"OK ({found}/{len(need)} found)")
 
+
 # ─── Translation ──────────────────────────────────────────────────────────────
+
 
 def translate_entries(entries, api_key, url_cache):
     """
@@ -202,13 +227,15 @@ def translate_entries(entries, api_key, url_cache):
         print(f"  Translating {len(titles)} new titles...", end=" ", flush=True)
         translations = {}
         chunk_size = 80
-        chunks = [titles[i:i + chunk_size] for i in range(0, len(titles), chunk_size)]
+        chunks = [titles[i : i + chunk_size] for i in range(0, len(titles), chunk_size)]
         all_ok = True
         for chunk in chunks:
             chunk_result = {}
             for attempt in range(3):
                 chunk_result = _translate_batch(chunk, api_key)
-                if chunk_result and any('\uAC00' <= c <= '\uD7A3' for v in chunk_result.values() for c in v):
+                if chunk_result and any(
+                    "\uAC00" <= c <= "\uD7A3" for v in chunk_result.values() for c in v
+                ):
                     break
                 if attempt < 2:
                     print(f"retry {attempt + 1}...", end=" ", flush=True)
@@ -226,10 +253,12 @@ def translate_entries(entries, api_key, url_cache):
     for entry in entries:
         entry["title_ko"] = url_cache.get(entry["url"], entry["title"])
 
+
 def _translate_batch(titles, api_key):
     """Call Gemini to translate a list of titles. Returns {original: translated}."""
     try:
         from google.genai import Client
+
         client = Client(api_key=api_key)
         payload = json.dumps({"titles": titles}, ensure_ascii=False)
         prompt = (
@@ -239,7 +268,7 @@ def _translate_batch(titles, api_key):
             "Respond with ONLY the JSON object, no markdown.\n\n" + payload
         )
         response = client.models.generate_content(
-            model="models/gemini-2.5-flash-lite",
+            model="models/gemini-3.1-flash-lite",
             contents=prompt,
         )
         cleaned = response.text.strip()
@@ -250,6 +279,7 @@ def _translate_batch(titles, api_key):
     except Exception as e:
         print(f"\n  [warn] Translation error: {e}", file=sys.stderr)
         return {}
+
 
 # ─── HTML Generation ──────────────────────────────────────────────────────────
 
@@ -262,8 +292,10 @@ ADSENSE_UNIT = """<ins class="adsbygoogle"
      data-ad-format="auto"
      data-full-width-responsive="true"></ins>"""
 
+
 def esc(s):
     return html.escape(str(s) if s else "")
+
 
 def generate_html(all_data, generated_at):
     """Generate a single index.html with both card and list views, toggled in-page."""
@@ -291,7 +323,9 @@ def generate_html(all_data, generated_at):
         cards = ""
         for card_idx, (src, src_entries) in enumerate(groups.items()):
             # Thumbnail from the first article that has one
-            thumb = next((e["thumbnail"] for e in src_entries if e.get("thumbnail")), None)
+            thumb = next(
+                (e["thumbnail"] for e in src_entries if e.get("thumbnail")), None
+            )
             thumb_html = ""
             if thumb:
                 thumb_html = f'<img class="group-thumb" src="{esc(thumb)}" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
@@ -306,10 +340,15 @@ def generate_html(all_data, generated_at):
             # Extract domain for favicon
             try:
                 from urllib.parse import urlparse
-                domain = urlparse(top['url']).netloc
+
+                domain = urlparse(top["url"]).netloc
             except Exception:
                 domain = ""
-            favicon_html = f'<img class="group-favicon" src="https://www.google.com/s2/favicons?domain={domain}&sz=32" alt="" onerror="this.style.display=\'none\'">' if domain else ""
+            favicon_html = (
+                f'<img class="group-favicon" src="https://www.google.com/s2/favicons?domain={domain}&sz=32" alt="" onerror="this.style.display=\'none\'">'
+                if domain
+                else ""
+            )
             if card_idx == 5:
                 cards += f'\n        <div class="ad-card">{ADSENSE_UNIT}</div>'
             cards += f"""
@@ -337,10 +376,15 @@ def generate_html(all_data, generated_at):
         for i, e in enumerate(entries[:LIST_MAX], 1):
             try:
                 from urllib.parse import urlparse
-                ldomain = urlparse(e['url']).netloc
+
+                ldomain = urlparse(e["url"]).netloc
             except Exception:
                 ldomain = ""
-            lfavicon = f'<img class="list-favicon" src="https://www.google.com/s2/favicons?domain={ldomain}&sz=32" alt="" onerror="this.style.display=\'none\'">' if ldomain else ""
+            lfavicon = (
+                f'<img class="list-favicon" src="https://www.google.com/s2/favicons?domain={ldomain}&sz=32" alt="" onerror="this.style.display=\'none\'">'
+                if ldomain
+                else ""
+            )
             if i in (6, 12):
                 rows += '\n        <div class="ad-list"><ins class="adsbygoogle" style="display:block" data-ad-format="fluid" data-ad-layout-key="-fb+5w+4e-db+86" data-ad-client="ca-pub-2939993747600082" data-ad-slot="1893036982"></ins></div>'
             rows += f"""
@@ -802,7 +846,9 @@ def generate_html(all_data, generated_at):
 </body>
 </html>"""
 
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
+
 
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -816,7 +862,9 @@ def main():
     api_key = get_gemini_api_key()
     if not api_key:
         print("[warn] No Gemini API key found. Titles will not be translated.")
-        print("       Save key to ~/.rreader_gemini_config.json or set GEMINI_API_KEY env var.")
+        print(
+            "       Save key to ~/.rreader_gemini_config.json or set GEMINI_API_KEY env var."
+        )
 
     url_cache = load_cache()
     og_cache = load_og_cache()
@@ -845,6 +893,7 @@ def main():
 
     print(f"Generated: output/index.html")
     print(f"Done at {now}")
+
 
 if __name__ == "__main__":
     main()
