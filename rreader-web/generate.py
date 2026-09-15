@@ -31,7 +31,7 @@ FEEDS_FILE = BASE_DIR / "feeds.json"
 GEMINI_CONFIG_FILE = Path.home() / ".rreader_gemini_config.json"
 
 CATEGORIES = ["tech", "news"]
-CARD_PER_SOURCE = 4  # articles per source in card view
+CARD_PER_SOURCE = 6  # articles per source in card view
 LIST_MAX = 50  # total articles in list view
 TIMEZONE = datetime.timezone(datetime.timedelta(hours=9))
 
