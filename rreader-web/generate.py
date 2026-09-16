@@ -31,7 +31,7 @@ OUTPUT_DIR = BASE_DIR / "output"
 FEEDS_FILE = BASE_DIR / "feeds.json"
 GEMINI_CONFIG_FILE = Path.home() / ".rreader_gemini_config.json"
 
-CATEGORIES = ["tech", "news"]
+CATEGORIES = ["tech", "news", "economy"]
 CARD_PER_SOURCE = 6  # articles per source in card view
 LIST_MAX = 50  # total articles in list view
 BRIEF_POOL = 60  # newest entries considered when picking the 3 headline stories
@@ -402,7 +402,6 @@ def esc(s):
 
 def generate_html(all_data, generated_at, briefs=None):
     """Generate a single index.html with both card and list views, toggled in-page."""
-    cat_labels = {"tech": "Tech", "news": "Top News"}
     briefs = briefs or {}
 
     # Build one headline-brief box per category (shown above whichever view is active)

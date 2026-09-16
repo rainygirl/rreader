@@ -58,5 +58,19 @@
             "NHK": "https://news.web.nhk/n-data/conf/na/rss/cat6.xml",
             "Financial Times": "https://www.ft.com/world?format=rss"
         }
+    },
+    "economy": {
+        "title": "Economy",
+        "feeds": {
+            "Financial Times": "https://www.ft.com/global-economy?format=rss",
+            "The Economist": "https://www.economist.com/finance-and-economics/rss.xml",
+            "Bloomberg": "https://feeds.bloomberg.com/economics/news.rss",
+            "WSJ": "https://feeds.content.dowjones.io/public/rss/socialeconomyfeed",
+            "New York Times": "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",
+            "Project Syndicate": "https://www.project-syndicate.org/rss",
+            "Nikkei Asia": "https://asia.nikkei.com/rss/feed/nar",
+            "SCMP": "https://www.scmp.com/rss/92/feed",
+            "The Diplomat": "https://thediplomat.com/topics/economy/feed/"
+        }
     }
 }
