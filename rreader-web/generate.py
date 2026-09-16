@@ -795,7 +795,7 @@ def generate_html(all_data, generated_at, briefs=None):
 
     /* ── Headline brief box ── */
     .brief {{
-      margin: 12px 16px 0;
+      margin: 12px 16px 12px;
       background: #fff;
       border: 1px solid #e8e8e8;
       padding: 8px 18px;
@@ -842,7 +842,7 @@ def generate_html(all_data, generated_at, briefs=None):
       white-space: nowrap;
     }}
     @media (max-width: 600px) {{
-      .brief {{ margin: 8px 8px 0; padding: 6px 14px; }}
+      .brief {{ margin: 8px 8px 8px; padding: 6px 14px; }}
       .brief-list li {{ font-size: 14px; }}
     }}
 
