@@ -908,6 +908,27 @@ impl App {
 
     fn load_or_refresh(&mut self) {
         let category = self.current_category_name().to_string();
+
+        // Already have entries in memory for this category (visited earlier
+        // this session -- possibly already translated). The on-disk cache
+        // NEVER stores translations (only fetch_feeds_parallel's raw parse
+        // result gets written there), so re-reading it on every single Tab
+        // press was overwriting already-translated in-memory entries with
+        // untranslated ones every time you revisited a category -- that's
+        // what showed up as "translation disappears when I switch tabs".
+        // Just keep what's on screen and only refresh in the background if
+        // it's actually due.
+        if self.entries.get(&category).is_some_and(|e| !e.is_empty()) {
+            let stale = self
+                .load_cached_feed(&category)
+                .map(|c| Utc::now().timestamp() - c.created_at >= REFRESH_INTERVAL as i64)
+                .unwrap_or(true);
+            if stale {
+                self.refresh_current_category();
+            }
+            return;
+        }
+
         if let Some(cached) = self.load_cached_feed(&category) {
             let age = Utc::now().timestamp() - cached.created_at;
             let fresh = age < REFRESH_INTERVAL as i64 && !cached.entries.is_empty();
@@ -1948,4 +1969,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-
