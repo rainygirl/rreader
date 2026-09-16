@@ -5,15 +5,28 @@ import requests
 import sys
 import html2text
 import google.genai as genai
-from google.genai import Client
+from google.genai import Client, types
 
 import json
 
 _TRANSLATE_MODEL = "models/gemini-3.1-flash-lite"
-_CHUNK_SIZE = 80  # a single unchunked request for a large category (900+ titles)
-# took 160s+ and silently lost ~10% of titles -- big batches are slow, easy to
-# truncate/time out, and any single malformed response poisons the whole
-# batch. Chunking (same size rreader-web uses) keeps each request fast.
+_CHUNK_SIZE = 40  # a single unchunked request for a large category (900+ titles)
+_ERROR_LOG = os.path.join(os.path.expanduser("~"), ".rreader_error.log")
+
+
+def _log_error(message):
+    """
+    curses owns the whole terminal while the app is running, so printing to
+    stdout/stderr corrupts the display instead of showing a normal error --
+    log to a file instead. A chunk occasionally failing its first attempt
+    (retried automatically) is expected/harmless; this is for diagnosing a
+    chunk that fails all 3 attempts.
+    """
+    try:
+        with open(_ERROR_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{message}\n")
+    except OSError:
+        pass
 
 
 def _is_korean(s):
@@ -42,7 +55,14 @@ def _translate_chunk(titles, api_key):
             "Keep idx exactly as given; do not skip, merge, split, or reorder entries. "
             "Respond with ONLY the JSON array, no markdown.\n\n" + json.dumps(indexed, ensure_ascii=False)
         )
-        response = client.models.generate_content(model=_TRANSLATE_MODEL, contents=prompt)
+        # response_mime_type="application/json" constrains the model to emit
+        # only valid JSON (no markdown fences, far fewer malformed/truncated
+        # responses) instead of hoping it follows the "ONLY JSON" instruction.
+        response = client.models.generate_content(
+            model=_TRANSLATE_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        )
         cleaned = response.text.strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -58,7 +78,7 @@ def _translate_chunk(titles, api_key):
                 result[titles[idx]] = ko
         return result
     except Exception as e:
-        sys.stderr.write(f"[rreader] Gemini translation error: {e}\n")
+        _log_error(f"[rreader] Gemini translation error: {e}")
         return {}
 
 

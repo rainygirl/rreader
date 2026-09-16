@@ -173,21 +173,40 @@ fn save_translation_cache(cache: &HashMap<String, String>) {
 }
 
 const TRANSLATE_MODEL: &str = "gemini-3.1-flash-lite";
-const TRANSLATE_CHUNK_SIZE: usize = 80; // see translate_titles_batch for why
+const TRANSLATE_CHUNK_SIZE: usize = 40; // see translate_titles_batch for why
 
-fn call_gemini_api(api_key: &str, prompt: &str) -> Result<String> {
+/// crossterm's alternate screen + raw mode owns the whole terminal while the
+/// app is running, so printing to stdout/stderr corrupts the display
+/// instead of showing a normal error -- log to a file instead.
+fn log_error(message: &str) {
+    if let Some(home) = dirs::home_dir() {
+        let path = home.join(".rreader_error.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            use std::io::Write;
+            let _ = writeln!(f, "{}", message);
+        }
+    }
+}
+
+fn call_gemini_api(api_key: &str, prompt: &str, json_mode: bool) -> Result<String> {
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
         TRANSLATE_MODEL, api_key
     );
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "contents": [{
             "parts": [{
                 "text": prompt
             }]
         }]
     });
+    if json_mode {
+        // Constrains the model to emit only valid JSON (no markdown fences,
+        // far fewer malformed/truncated responses) instead of hoping it
+        // follows the "respond with ONLY JSON" instruction in the prompt.
+        body["generationConfig"] = serde_json::json!({"responseMimeType": "application/json"});
+    }
 
     // 80-title chunks normally finish in a few seconds; 60s leaves real
     // margin without the old 30s figure that a large batch could still blow
@@ -241,10 +260,10 @@ fn translate_chunk(titles: &[String], api_key: &str) -> HashMap<String, String> 
         serde_json::Value::Array(indexed)
     );
 
-    let response_text = match call_gemini_api(api_key, &prompt) {
+    let response_text = match call_gemini_api(api_key, &prompt, true) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("[rreader] Gemini translation error: {}", e);
+            log_error(&format!("[rreader] Gemini translation error: {}", e));
             return result;
         }
     };
@@ -259,7 +278,7 @@ fn translate_chunk(titles: &[String], api_key: &str) -> HashMap<String, String> 
     let arr: Vec<serde_json::Value> = match serde_json::from_str(cleaned) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[rreader] Gemini translation response was not valid JSON: {}", e);
+            log_error(&format!("[rreader] Gemini translation response was not valid JSON: {}", e));
             return result;
         }
     };
@@ -277,13 +296,15 @@ fn translate_chunk(titles: &[String], api_key: &str) -> HashMap<String, String> 
     result
 }
 
-/// Translate every given title, chunked so a single request stays fast: an
-/// unchunked request for a large category (900+ titles, since the feeds.json
-/// port added many more sources) took 160s+ and silently lost ~10% of
-/// titles -- long-running requests are easy to time out or truncate, and one
-/// malformed response poisons the whole batch. Failing titles are retried
-/// (as a shrinking sub-batch) within this call; anything still unresolved is
-/// simply left out of the cache so the next translation pass tries again.
+/// Translate every given title, chunked so a single request stays fast and
+/// small: an unchunked request for a large category (900+ titles, since the
+/// feeds.json port added many more sources) took 160s+ and silently lost
+/// ~10% of titles -- long-running requests are easy to time out or
+/// truncate, and one malformed response poisons the whole batch. 40-title
+/// chunks with JSON response mode (see call_gemini_api) make a malformed
+/// response much rarer in the first place; failing titles are also retried
+/// (as a shrinking sub-batch) within this call, and anything still
+/// unresolved is simply left out of the cache so the next pass tries again.
 fn translate_titles_batch(
     titles: &[String],
     api_key: &str,
@@ -421,7 +442,7 @@ fn summarize_with_gemini(url: &str, api_key: &str) -> String {
         url, truncated
     );
 
-    match call_gemini_api(api_key, &prompt) {
+    match call_gemini_api(api_key, &prompt, false) {
         Ok(text) => text,
         Err(e) => format!("Error from Gemini API: {}", e),
     }
@@ -1856,3 +1877,4 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
