@@ -26,6 +26,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 CACHE_FILE = BASE_DIR / "cache" / "translations.json"
 OG_CACHE_FILE = BASE_DIR / "cache" / "og_images.json"
+BRIEF_CACHE_FILE = BASE_DIR / "cache" / "briefs.json"
 OUTPUT_DIR = BASE_DIR / "output"
 FEEDS_FILE = BASE_DIR / "feeds.json"
 GEMINI_CONFIG_FILE = Path.home() / ".rreader_gemini_config.json"
@@ -33,6 +34,8 @@ GEMINI_CONFIG_FILE = Path.home() / ".rreader_gemini_config.json"
 CATEGORIES = ["tech", "news"]
 CARD_PER_SOURCE = 6  # articles per source in card view
 LIST_MAX = 50  # total articles in list view
+BRIEF_POOL = 60  # newest entries considered when picking the 3 headline stories
+BRIEF_COUNT = 3
 TIMEZONE = datetime.timezone(datetime.timedelta(hours=9))
 
 # ─── API Key ──────────────────────────────────────────────────────────────────
@@ -131,6 +134,8 @@ def fetch_category(feeds_config):
             clean_title = re.sub(r"<[^>]+>", "", html.unescape(feed.title)).strip()
             if "퀴즈" in clean_title:
                 continue
+            raw_desc = getattr(feed, "summary", "") or ""
+            desc = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html.unescape(raw_desc))).strip()[:200]
 
             entries[ts] = {
                 "url": getattr(feed, "link", ""),
@@ -139,6 +144,7 @@ def fetch_category(feeds_config):
                 "pubDate": pub_date,
                 "timestamp": ts,
                 "thumbnail": thumbnail,
+                "desc": desc,
             }
 
     return sorted(entries.values(), key=lambda x: x["timestamp"], reverse=True)
@@ -281,6 +287,103 @@ def _translate_batch(titles, api_key):
         return {}
 
 
+# ─── Headline brief (3 key stories per category) ─────────────────────────────
+
+
+def load_brief_cache():
+    if BRIEF_CACHE_FILE.exists():
+        with open(BRIEF_CACHE_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def save_brief_cache(cache):
+    BRIEF_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(BRIEF_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def build_brief(cat_title, entries, api_key, brief_cache, cat_key):
+    """
+    Pick the BRIEF_COUNT most important stories among the newest BRIEF_POOL entries
+    and summarize each in one Korean sentence. Returns [{summary, url, source}].
+    Cached per category on the set of candidate URLs, so an unchanged pool
+    does not re-hit Gemini.
+    """
+    import hashlib
+
+    pool = [e for e in entries[:BRIEF_POOL] if e["url"]]
+    if not pool:
+        return []
+    pool_key = hashlib.sha1("\n".join(e["url"] for e in pool).encode()).hexdigest()
+    cached = brief_cache.get(cat_key)
+    if cached and cached.get("key") == pool_key:
+        return cached["items"]
+    if not api_key:
+        return cached["items"] if cached else []
+
+    print(f"  Building brief from {len(pool)} entries...", end=" ", flush=True)
+    candidates = [
+        {"idx": i, "source": e["source"], "title": e["title"], "desc": e.get("desc", "")}
+        for i, e in enumerate(pool)
+    ]
+    prompt = (
+        f"You are a news editor for a Korean '{cat_title}' news digest. "
+        f"Below are the latest headlines as a JSON list. Choose the {BRIEF_COUNT} most important, "
+        "newsworthy stories (prefer distinct topics and distinct sources; skip opinion pieces, "
+        "product deals, and trivia). For each, write ONE natural Korean sentence (about 50-80 characters) "
+        "that summarizes the story so a reader understands what happened without clicking. "
+        f"Return ONLY a JSON array of exactly {BRIEF_COUNT} objects: "
+        '[{"idx": <idx from input>, "summary": "<Korean sentence>"}], ordered by importance, no markdown.\n\n'
+        + json.dumps(candidates, ensure_ascii=False)
+    )
+    items = []
+    for attempt in range(3):
+        result = _gemini_json(prompt, api_key)
+        items = []
+        seen = set()
+        for r in result if isinstance(result, list) else []:
+            try:
+                idx = int(r.get("idx"))
+                summary = str(r.get("summary", "")).strip()
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if 0 <= idx < len(pool) and summary and idx not in seen:
+                seen.add(idx)
+                e = pool[idx]
+                items.append({"summary": summary, "url": e["url"], "source": e["source"]})
+        if len(items) >= BRIEF_COUNT:
+            items = items[:BRIEF_COUNT]
+            break
+        if attempt < 2:
+            print(f"retry {attempt + 1}...", end=" ", flush=True)
+    if items:
+        print("OK")
+        brief_cache[cat_key] = {"key": pool_key, "items": items}
+        return items
+    print("FAIL")
+    return cached["items"] if cached else []
+
+
+def _gemini_json(prompt, api_key):
+    """Call Gemini and parse a JSON response. Returns parsed JSON or None."""
+    try:
+        from google.genai import Client
+
+        client = Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="models/gemini-3.1-flash-lite",
+            contents=prompt,
+        )
+        cleaned = response.text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        return json.loads(cleaned)
+    except Exception as e:
+        print(f"\n  [warn] Gemini error: {e}", file=sys.stderr)
+        return None
+
+
 # ─── HTML Generation ──────────────────────────────────────────────────────────
 
 ACCENT = "#ec8c6f"
@@ -297,9 +400,27 @@ def esc(s):
     return html.escape(str(s) if s else "")
 
 
-def generate_html(all_data, generated_at):
+def generate_html(all_data, generated_at, briefs=None):
     """Generate a single index.html with both card and list views, toggled in-page."""
     cat_labels = {"tech": "Tech", "news": "Top News"}
+    briefs = briefs or {}
+
+    # Build one headline-brief box per category (shown above whichever view is active)
+    briefs_html = ""
+    for cat_key, cat_title, _ in all_data:
+        items = briefs.get(cat_key) or []
+        if not items:
+            continue
+        lis = ""
+        for it in items:
+            lis += f"""
+        <li><a href="{esc(it['url'])}" target="_blank" rel="noopener">{esc(it['summary'])}</a><span class="brief-source">{esc(it['source'])}</span></li>"""
+        briefs_html += f"""
+    <section class="brief" data-cat="{cat_key}" style="display:none">
+      <div class="brief-head">{esc(cat_title)} 핵심 뉴스 3줄</div>
+      <ol class="brief-list">{lis}
+      </ol>
+    </section>"""
 
     # Build tab-nav links
     tabs_html = ""
@@ -567,6 +688,68 @@ def generate_html(all_data, generated_at):
       padding: 12px 0;
     }}
 
+    /* ── Headline brief box ── */
+    .brief {{
+      margin: 12px 16px 0;
+      background: #fff;
+      border: 1px solid #f3d5cb;
+      border-left: 4px solid {ACCENT};
+      border-radius: 10px;
+      padding: 14px 18px 12px;
+    }}
+    .brief-head {{
+      font-size: 13px;
+      font-weight: 700;
+      color: {ACCENT};
+      letter-spacing: -0.3px;
+      margin-bottom: 8px;
+    }}
+    .brief-list {{
+      list-style: none;
+      counter-reset: brief;
+    }}
+    .brief-list li {{
+      counter-increment: brief;
+      position: relative;
+      padding: 6px 0 6px 26px;
+      font-size: 15px;
+      line-height: 1.55;
+      letter-spacing: -0.4px;
+      color: #1a1a1a;
+    }}
+    .brief-list li + li {{ border-top: 1px solid #f4f4f4; }}
+    .brief-list li::before {{
+      content: counter(brief);
+      position: absolute;
+      left: 0;
+      top: 8px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: {ACCENT};
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      text-align: center;
+      line-height: 18px;
+    }}
+    .brief-list a {{
+      color: inherit;
+      text-decoration: none;
+      font-weight: 600;
+    }}
+    .brief-list a:hover {{ color: {ACCENT}; }}
+    .brief-source {{
+      margin-left: 8px;
+      font-size: 12px;
+      color: #aaa;
+      white-space: nowrap;
+    }}
+    @media (max-width: 600px) {{
+      .brief {{ margin: 8px 8px 0; padding: 12px 14px 10px; }}
+      .brief-list li {{ font-size: 14px; }}
+    }}
+
     /* ── Card view (publisher groups) ── */
     .cards {{
       display: grid;
@@ -755,7 +938,7 @@ def generate_html(all_data, generated_at):
     </div>
   </header>
   <div class="mobile-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></div>
-  <main>{sections}
+  <main>{briefs_html}{sections}
   </main>
   <footer>데이터 소스: 각 매체 공개 RSS / 한국어 번역: Gemini<br><br><a href="https://python.org/" target="_blank" rel="noopener">Powered by Python</a><br>소스코드: <a href="https://github.com/rainygirl/rreader" target="_blank" rel="noopener">github.com/rainygirl/rreader</a><br><br>개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></footer>
   <script>
@@ -784,6 +967,9 @@ def generate_html(all_data, generated_at):
   }}
 
   function showPane() {{
+    document.querySelectorAll('.brief').forEach(function(el) {{
+      el.style.display = el.dataset.cat === currentCat ? '' : 'none';
+    }});
     document.querySelectorAll('.pane').forEach(function(el) {{
       var visible = el.dataset.cat === currentCat && el.dataset.view === currentView;
       el.style.display = visible ? '' : 'none';
@@ -870,7 +1056,9 @@ def main():
 
     url_cache = load_cache()
     og_cache = load_og_cache()
+    brief_cache = load_brief_cache()
     all_data = []
+    briefs = {}
 
     for cat_key in CATEGORIES:
         cat_config = feeds_config.get(cat_key)
@@ -883,14 +1071,16 @@ def main():
         print(f"  → {len(entries)} entries fetched")
         translate_entries(entries, api_key, url_cache)
         fetch_og_images(entries, og_cache)
+        briefs[cat_key] = build_brief(cat_title, entries, api_key, brief_cache, cat_key)
         all_data.append((cat_key, cat_title, entries))
 
     save_cache(url_cache)
     save_og_cache(og_cache)
+    save_brief_cache(brief_cache)
     print(f"\nCache saved ({len(url_cache)} translations, {len(og_cache)} og:images)")
 
     now = datetime.datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M KST")
-    index_html = generate_html(all_data, now)
+    index_html = generate_html(all_data, now, briefs)
     (OUTPUT_DIR / "index.html").write_text(index_html, encoding="utf-8")
 
     print(f"Generated: output/index.html")
