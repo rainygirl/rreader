@@ -28,11 +28,13 @@ private:
 	void HandleFetchResult(BMessage* message);
 	void ShowCategory(const BString& key);
 	void ShowStatus(const char* text);
+	void HideStatus();
 
 	HeaderView* fHeader;
 	BScrollView* fScrollView;
 	FlowLayoutView* fFlowView;
 	BStringView* fStatusView; // centered "Loading..." / error text, shown when there's no data yet
+	bool fStatusHidden;
 
 	std::vector<Category> fCategories;
 	BString fCurrentCategory;

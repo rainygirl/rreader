@@ -12,6 +12,8 @@
 #include <View.h>
 #include <vector>
 
+class BriefView;
+
 class FlowLayoutView : public BView {
 public:
 	FlowLayoutView(BRect frame, const char* name);
@@ -28,16 +30,34 @@ public:
 	// for its content); FlowLayoutView only decides X/Y position.
 	void AddCard(BView* card);
 
+	// Optional box spanning the grid width above the cards (NULL for none).
+	// Added as a child like the cards; ClearCards forgets it too.
+	void SetBrief(BriefView* brief);
+
 	// Recomputes the column count for the current width and repositions
 	// every child accordingly. Called automatically from FrameResized and
 	// after AddCard finishes a batch (see MainWindow::ShowCategory).
 	void Relayout();
 
 	void FrameResized(float width, float height) override;
+	// Arrow keys walk every link on the page; Enter/Space opens the
+	// selected one in the browser.
+	void KeyDown(const char* bytes, int32 numBytes) override;
+	void MakeFocus(bool focus) override;
 
 private:
+	float VisibleHeight() const;
+	std::vector<BView*> LinkViews() const;
+	void MoveSelection(int delta);
+	void ScrollToSelection();
+	void ActivateSelection();
+
 	std::vector<BView*> fCards;
+	BriefView* fBrief;
 	float fContentHeight; // total height needed, used to size ourselves for BScrollView
+	int fSelectedView;    // index into LinkViews(), -1 if none
+	int fSelectedLink;    // index within that view's links
+	bool fRelayouting;
 };
 
 #endif // NEWS_COROKE_FLOW_LAYOUT_VIEW_H

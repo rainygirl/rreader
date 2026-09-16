@@ -9,7 +9,7 @@
 #include <vector>
 
 // Sent to the header's target when a tab is clicked. Field: "key" (string).
-extern const uint32 kMsgTabSelected;
+inline constexpr uint32 kMsgTabSelected = 'tabS';
 
 class HeaderView : public BView {
 public:

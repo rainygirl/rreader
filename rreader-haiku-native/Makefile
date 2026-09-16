@@ -1,10 +1,5 @@
-# Makefile -- build news.coroke.net (rreader-haiku-native) with a plain,
-# direct g++ invocation rather than depending on Haiku's shared
-# makefile-engine being present at a particular path, so this works the
-# same whether you build inside the OS source tree or as a standalone
-# third-party app. Run on an actual Haiku machine/VM (or Haiku's
-# cross-compilation toolchain) -- this was NOT compiled in the session
-# that wrote it; see README.md's "Not yet built" section.
+# Build on Haiku. On x86_gcc2 hybrid installs the modern compiler lives in
+# the x86 secondary architecture, so everything goes through `setarch x86`.
 
 APP_NAME := NewsCoroke
 TARGET := $(APP_NAME)
@@ -14,11 +9,22 @@ OBJ_DIR := obj
 SOURCES := $(wildcard $(SRC_DIR)/*.cpp)
 OBJECTS := $(SOURCES:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
 
-CXX ?= g++
-CXXFLAGS := -std=c++17 -Wall -O2 -I$(SRC_DIR)
-LDFLAGS := -lbe -lnetwork -ltranslation
+ARCH := $(shell getarch 2>/dev/null)
+ifeq ($(ARCH),x86_gcc2)
+  CXX := setarch x86 g++
+else
+  CXX ?= g++
+endif
 
-.PHONY: all clean run resources
+# libcurl headers are vendored (8.14.1) because HaikuPorts' *_devel package
+# isn't always installable; the runtime lib comes from the curl package.
+CXXFLAGS := -std=c++17 -Wall -O2 -I$(SRC_DIR) -Ithird_party/curl/include
+# -l:libcurl.so.4 since the unversioned libcurl.so symlink also lives in _devel.
+LDFLAGS := -lbe -ltranslation -l:libcurl.so.4
+
+INSTALL_DIR ?= /boot/home/config/non-packaged/apps
+
+.PHONY: all clean run resources install
 
 all: $(TARGET)
 
@@ -32,18 +38,19 @@ $(TARGET): $(OBJECTS)
 	$(CXX) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
 	$(MAKE) resources
 
-# Embeds the app signature/icon/version from resources/App.rdef so Tracker
-# and Deskbar show the right name/icon. `rc`/`xres` ship with Haiku's
-# development tools; this step is skipped (with a warning, not a failure)
-# on any other OS so `make` still produces a usable binary for inspection.
 resources:
 	@if command -v rc >/dev/null 2>&1; then \
 		rc -o $(OBJ_DIR)/App.rsrc resources/App.rdef && \
 		xres -o $(TARGET) $(OBJ_DIR)/App.rsrc && \
 		mimeset -f $(TARGET); \
 	else \
-		echo "[warn] 'rc'/'xres' not found (not running on Haiku?) -- skipping resource embedding"; \
+		echo "[warn] 'rc'/'xres' not found -- skipping resource embedding"; \
 	fi
+
+install: $(TARGET)
+	mkdir -p "$(INSTALL_DIR)"
+	cp $(TARGET) "$(INSTALL_DIR)/news.coroke.net"
+	mimeset -f "$(INSTALL_DIR)/news.coroke.net"
 
 run: all
 	./$(TARGET)

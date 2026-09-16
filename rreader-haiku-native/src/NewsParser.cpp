@@ -274,5 +274,60 @@ std::vector<Category> NewsParser::Parse(const BString& htmlIn) {
 			categories.push_back(category);
 	}
 
+	// <section class="brief" data-cat="KEY"><ol class="brief-list">
+	//   <li><a href="URL" ...>TEXT</a><span class="brief-source">SRC</span></li>
+	size_t briefPos = 0;
+	while (true) {
+		size_t sectionStart = html.find("<section class=\"brief\"", briefPos);
+		if (sectionStart == std::string::npos)
+			break;
+		size_t sectionEnd = html.find("</section>", sectionStart);
+		if (sectionEnd == std::string::npos)
+			break;
+		briefPos = sectionEnd;
+
+		std::string section = html.substr(sectionStart, sectionEnd - sectionStart);
+		std::string key;
+		FindAttr(section.substr(0, section.find('>')), "data-cat", &key);
+
+		Category* target = NULL;
+		for (auto& c : categories) {
+			if (key == c.key.String())
+				target = &c;
+		}
+		if (target == NULL)
+			continue;
+
+		size_t liPos = 0;
+		while (true) {
+			size_t liStart = section.find("<li>", liPos);
+			if (liStart == std::string::npos)
+				break;
+			size_t liEnd = section.find("</li>", liStart);
+			if (liEnd == std::string::npos)
+				break;
+			std::string li = section.substr(liStart, liEnd - liStart);
+			liPos = liEnd;
+
+			size_t aStart = li.find("<a ");
+			size_t aTagEnd = li.find('>', aStart);
+			size_t aClose = li.find("</a>", aTagEnd);
+			if (aStart == std::string::npos || aTagEnd == std::string::npos
+				|| aClose == std::string::npos)
+				continue;
+
+			BriefItem item;
+			std::string href, source;
+			if (FindAttr(li.substr(aStart, aTagEnd - aStart), "href", &href))
+				item.url = NewsParser::DecodeEntities(ToB(href));
+			item.text = NewsParser::DecodeEntities(
+				ToB(Trim(StripTags(li.substr(aTagEnd + 1, aClose - aTagEnd - 1)))));
+			if (FindBetween(li, "<span class=\"brief-source\">", "</span>", aClose, &source, NULL))
+				item.source = NewsParser::DecodeEntities(ToB(Trim(source)));
+			if (!item.text.IsEmpty())
+				target->brief.push_back(item);
+		}
+	}
+
 	return categories;
 }

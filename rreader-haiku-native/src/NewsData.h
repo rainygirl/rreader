@@ -24,10 +24,18 @@ struct SourceCard {
 	std::vector<SubArticle> subs;
 };
 
+// One <li> of <section class="brief">: a one-sentence headline summary.
+struct BriefItem {
+	BString text;
+	BString url;
+	BString source;
+};
+
 // One <section data-cat="..." data-view="card">: a whole tab's worth of cards.
 struct Category {
 	BString key;    // "tech" / "news" / "economy"
 	BString title;  // "Tech" / "Top News" / "Economy"
+	std::vector<BriefItem> brief;
 	std::vector<SourceCard> cards;
 };
 

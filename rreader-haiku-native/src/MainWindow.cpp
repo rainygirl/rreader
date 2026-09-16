@@ -5,8 +5,10 @@
 #include <Message.h>
 #include <ScrollBar.h>
 
+#include "BriefView.h"
 #include "CardView.h"
 #include "Colors.h"
+#include "ImageLoader.h"
 #include "NewsFetcher.h"
 #include "NewsParser.h"
 
@@ -25,20 +27,20 @@ MainWindow::MainWindow()
 	  fHeader(NULL),
 	  fScrollView(NULL),
 	  fFlowView(NULL),
-	  fStatusView(NULL) {
+	  fStatusView(NULL),
+	  fStatusHidden(false) {
 	BRect bounds = Bounds();
 
 	fHeader = new HeaderView(BRect(0, 0, bounds.Width(), kHeaderHeight));
 	AddChild(fHeader);
 
-	BRect flowFrame(0, 0, bounds.Width() - B_V_SCROLL_BAR_WIDTH, 10);
+	// The scroll view sizes itself (and its scroll bar) around the target's
+	// frame, so the flow view has to start out at its real size.
+	BRect flowFrame(0, kHeaderHeight, bounds.Width() - B_V_SCROLL_BAR_WIDTH, bounds.Height());
 	fFlowView = new FlowLayoutView(flowFrame, "flow");
 
-	BRect scrollFrame(0, kHeaderHeight, bounds.Width(), bounds.Height());
 	fScrollView = new BScrollView(
 		"scroll", fFlowView, B_FOLLOW_LEFT_RIGHT | B_FOLLOW_TOP_BOTTOM, 0, false, true);
-	fScrollView->MoveTo(0, kHeaderHeight);
-	fScrollView->ResizeTo(bounds.Width(), bounds.Height() - kHeaderHeight);
 	AddChild(fScrollView);
 
 	BFont statusFont;
@@ -61,9 +63,21 @@ void MainWindow::StartFetch() {
 	NewsFetcher::FetchAsync(kNewsUrl, BMessenger(this));
 }
 
+// BView::Show()/Hide() are counted, and IsHidden() is true for every view
+// while the window itself hasn't been shown yet -- so track it ourselves.
 void MainWindow::ShowStatus(const char* text) {
 	fStatusView->SetText(text);
-	fStatusView->Show();
+	if (fStatusHidden) {
+		fStatusView->Show();
+		fStatusHidden = false;
+	}
+}
+
+void MainWindow::HideStatus() {
+	if (!fStatusHidden) {
+		fStatusView->Hide();
+		fStatusHidden = true;
+	}
 }
 
 void MainWindow::MessageReceived(BMessage* message) {
@@ -129,8 +143,9 @@ void MainWindow::ShowCategory(const BString& key) {
 	fCurrentCategory = key;
 	fHeader->SetActiveTab(key);
 
-	// Remove and delete the previous category's CardViews before building
-	// the new set -- FlowLayoutView doesn't own them.
+	// Remove and delete the previous category's views before building the
+	// new set -- FlowLayoutView doesn't own them.
+	ImageLoader::CancelPending();
 	while (fFlowView->CountChildren() > 0) {
 		BView* child = fFlowView->ChildAt(0);
 		fFlowView->RemoveChild(child);
@@ -138,27 +153,28 @@ void MainWindow::ShowCategory(const BString& key) {
 	}
 	fFlowView->ClearCards();
 
+	if (!found->brief.empty())
+		fFlowView->SetBrief(new BriefView(found->brief));
+
 	for (size_t i = 0; i < found->cards.size(); i++) {
 		BRect frame(0, 0, kCardWidth, 10);
 		CardView* card = new CardView(frame, found->cards[i]);
 		fFlowView->AddCard(card);
 	}
+	fFlowView->ScrollTo(0, 0);
 	fFlowView->Relayout();
+	fFlowView->MakeFocus(true);
 
 	if (found->cards.empty())
 		ShowStatus("이 카테고리에는 표시할 기사가 없습니다.");
 	else
-		fStatusView->Hide();
+		HideStatus();
 }
 
 void MainWindow::FrameResized(float width, float height) {
 	BWindow::FrameResized(width, height);
 
 	fHeader->ResizeTo(width, kHeaderHeight);
-	fScrollView->ResizeTo(width, height - kHeaderHeight);
-
-	float contentWidth = width - B_V_SCROLL_BAR_WIDTH;
-	fFlowView->ResizeTo(contentWidth, fFlowView->Bounds().Height());
 	fFlowView->Relayout();
 
 	fStatusView->ResizeTo(width, 40);

@@ -1,7 +1,6 @@
-// HttpFetch.h -- blocking HTTP GET helper (Network Kit), meant to be
-// called from a worker thread you already spawned (never from the UI
-// thread). Shared by NewsFetcher (page HTML) and ImageLoader (thumbnails/
-// favicons) so the BUrlRequest plumbing exists in exactly one place.
+// HttpFetch.h -- blocking HTTP GET helper (libcurl; Haiku's BUrlRequest
+// API is private and not linkable from third-party apps). Call only from
+// worker threads, never the UI thread.
 #ifndef NEWS_COROKE_HTTP_FETCH_H
 #define NEWS_COROKE_HTTP_FETCH_H
 
@@ -9,6 +8,9 @@
 #include <SupportDefs.h>
 
 namespace HttpFetch {
+
+// Call once from main() before any thread uses GetSync*.
+void GlobalInit();
 
 // Blocks the calling thread until the request completes. On success,
 // fills `outBody` with the raw response bytes and returns true.

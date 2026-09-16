@@ -9,7 +9,6 @@
 using namespace NewsColors;
 using namespace NewsMetrics;
 
-const uint32 kMsgTabSelected = 'tabS';
 
 namespace {
 const float kLogoFontSize = 18.0f;

@@ -59,12 +59,17 @@ const float kGridPaddingH = 16.0f;
 const float kGridPaddingTop = 12.0f;
 const float kGridPaddingBottom = 24.0f;
 
+// .brief: margin 12px 16px 0, then .cards' own 12px top padding below it.
+const float kBriefMarginTop = 12.0f;
+const float kBriefMarginBottom = 12.0f;
+
 const float kCardCornerRadius = 10.0f;
 const float kCardHeaderPaddingH = 14.0f;
 const float kCardHeaderPaddingTop = 12.0f;
 const float kCardHeaderPaddingBottom = 10.0f;
 const float kFaviconSize = 16.0f;
 const float kThumbSize = 68.0f;
+const float kThumbCornerRadius = 6.0f;
 const float kCardBottomPadding = 10.0f;
 
 } // namespace NewsMetrics

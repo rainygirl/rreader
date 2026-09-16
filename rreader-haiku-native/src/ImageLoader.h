@@ -13,11 +13,14 @@
 // echoes the request so the receiver can match it to the right card/view),
 // "success" (bool), "bitmap" (a BBitmap archived via BMessage::AddFlat, if
 // success).
-extern const uint32 kMsgImageLoaded;
+inline constexpr uint32 kMsgImageLoaded = 'imgL';
 
 namespace ImageLoader {
 
 void LoadAsync(const BString& url, const BMessenger& target);
+
+// Drops queued (not yet started) loads, e.g. when switching tabs.
+void CancelPending();
 
 } // namespace ImageLoader
 

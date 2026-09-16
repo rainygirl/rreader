@@ -1,19 +1,12 @@
 # rreader-haiku-native
 
-A native Haiku OS app (BApplication/BWindow, Interface Kit + Network Kit +
-Translation Kit) that fetches the live [news.coroke.net](https://news.coroke.net)
+A native Haiku OS app (BApplication/BWindow, Interface Kit + Translation
+Kit + libcurl) that fetches the live [news.coroke.net](https://news.coroke.net)
 page and redraws it natively -- same design as rreader-web, but as a real
 Haiku GUI app instead of a browser tab.
 
-**⚠️ Not yet built or run.** This was written in a session with no Haiku
-machine/VM/cross-toolchain available (macOS sandbox, no `libbe`/Haiku
-headers), so none of this has been compiled or tested against a real Haiku
-SDK. It's written carefully against well-established Haiku API signatures,
-but the Network Kit listener interface in particular (`BUrlProtocolListener`)
-has shifted slightly across Haiku releases -- see the `NOTE` comment in
-`src/HttpFetch.cpp` if it doesn't compile as-is. Build it on a real Haiku
-box (or in a Haiku VM/container) and fix up whatever doesn't match your
-SDK version before trusting it.
+Built and run on Haiku R1/beta6 (x86_gcc2 hybrid, built with the `x86`
+secondary architecture's GCC 13).
 
 ## What it does
 
@@ -34,6 +27,8 @@ SDK version before trusting it.
   a wide one, recalculated live on resize. This is actually *more*
   flexible than the web version, which caps at 3 columns inside a
   1200px-max-width container.
+- Arrow keys walk every link on the page (brief box first, then the cards
+  in layout order), scrolling the selection into view; Enter/Space opens it.
 - Every link (top story, sub-articles) opens in the system's default
   browser (`src/UrlOpener.cpp`, via `be_roster->Launch()`), never inside
   the app.
@@ -54,9 +49,9 @@ don't have a clean 1:1 native equivalent and were approximated:
 - Card hover shadow (`box-shadow` on `.group-card:hover`) is approximated
   with just a border-color change (`kCardBorderHover`), since `BView`
   doesn't have a built-in soft drop-shadow primitive.
-- The web version's AdSense card slot, "핵심 뉴스 3줄" brief box, and
-  card/list view toggle aren't ported -- this app is specifically about
-  redrawing the news card grid, not the whole page chrome.
+- The web version's AdSense card slot and card/list view toggle aren't
+  ported -- this app is specifically about redrawing the news content,
+  not the whole page chrome.
 
 ## Layout
 
@@ -69,15 +64,18 @@ src/
   HeaderView.h / .cpp      accent-colored header bar: logo + tabs
   FlowLayoutView.h / .cpp   reflowing fixed-width-card grid container
   CardView.h / .cpp         draws one source's card, handles clicks
+  BriefView.h / .cpp         the "핵심 뉴스 3줄" box above the grid
+  LinkSource.h                link interface used for keyboard navigation
   NewsFetcher.h / .cpp       async page fetch -> BMessage
   NewsParser.h / .cpp        HTML -> Category/SourceCard data
   NewsData.h                  plain data structs
   ImageLoader.h / .cpp         async image fetch + decode -> BBitmap
-  HttpFetch.h / .cpp            shared blocking-GET helper (Network Kit)
+  HttpFetch.h / .cpp            shared blocking-GET helper (libcurl)
   UrlOpener.h / .cpp             open a URL in the default browser
   Colors.h                        colors/metrics ported from generate.py
 resources/
   App.rdef             app signature/version resource (see Makefile)
+third_party/curl/      vendored libcurl public headers
 Makefile
 ```
 
@@ -88,26 +86,29 @@ On a Haiku machine (or Haiku VM/cross-toolchain):
 ```
 cd rreader-haiku-native
 make
-./NewsCoroke
+make install   # -> /boot/home/config/non-packaged/apps/news.coroke.net
 ```
 
-`make` compiles every `src/*.cpp`, links against `libbe`, `libnetwork`,
-`libtranslation`, and (if `rc`/`xres` are available, i.e. you're actually
-building on Haiku) embeds `resources/App.rdef` and runs `mimeset` so
-Tracker/Deskbar show "news.coroke.net" as the app name. No app icon is
-embedded (see `resources/App.rdef`'s comment) -- add one with
-Icon-O-Matic if you want a custom icon.
+`make` compiles every `src/*.cpp` and links against `libbe`,
+`libtranslation` and `libcurl`. On an x86_gcc2 hybrid install it builds
+through `setarch x86` so the modern GCC is used. libcurl's headers are
+vendored under `third_party/curl` because HaikuPorts' `curl_x86_devel`
+package isn't always installable, and it links `libcurl.so.4` directly
+since the unversioned symlink ships in that same devel package. Haiku's
+own `BUrlRequest` API is not used: it lives in private headers and its
+symbols aren't exported by any library a third-party app can link.
 
-## Known gaps / next steps for whoever builds this first
+`rc`/`xres` embed `resources/App.rdef` so Tracker/Deskbar show
+"news.coroke.net" as the app name. No app icon is embedded -- add one
+with Icon-O-Matic if you want a custom icon.
 
-1. **Actually compile it** and fix any Network Kit / Interface Kit API
-   drift against the exact Haiku version you're on (see the warning at
-   the top of this file).
-2. No automated tests -- verify by eye against https://news.coroke.net/
+## Known gaps
+
+1. No automated tests -- verify by eye against https://news.coroke.net/
    for a couple of categories, including one with a thumbnail-less card
    and one with 6 sub-articles (longest card), to sanity-check
    `CardView::RecomputeHeight()`'s wrapping/height math.
-3. No app icon.
-4. No pull-to-refresh / manual refresh button yet -- currently only
+2. No app icon.
+3. No pull-to-refresh / manual refresh button yet -- currently only
    fetches once on startup. Would be a small addition to `MainWindow`
    (a toolbar button or a keyboard shortcut calling `StartFetch()` again).

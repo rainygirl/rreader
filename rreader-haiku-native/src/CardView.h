@@ -14,12 +14,18 @@
 #include <View.h>
 #include <vector>
 
+#include "LinkSource.h"
 #include "NewsData.h"
 
-class CardView : public BView {
+class CardView : public BView, public LinkSource {
 public:
 	CardView(BRect frame, const SourceCard& card);
 	virtual ~CardView();
+
+	int LinkCount() const override;
+	BString LinkUrl(int index) const override;
+	BRect LinkFrame(int index) const override;
+	void SetSelectedLink(int index) override;
 
 	void AttachedToWindow() override;
 	void Draw(BRect updateRect) override;
@@ -34,6 +40,7 @@ private:
 	};
 
 	void RecomputeHeight();
+	void DrawThumb(BRect dest);
 	// Wraps `text` in `font` to fit `maxWidth`, appending lines as it goes.
 	// Used for the (possibly multi-line) top title.
 	std::vector<BString> WrapText(const BString& text, const BFont& font, float maxWidth) const;
@@ -51,6 +58,7 @@ private:
 	BBitmap* fFaviconBitmap;
 	bool fThumbFailed;
 	bool fFaviconFailed;
+	int fSelectedLink; // -1 if none
 
 	bool fHoveringTop;
 	int fHoveringSubIndex; // -1 if none

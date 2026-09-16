@@ -12,7 +12,7 @@
 // Message posted back to the target handler when a fetch finishes.
 // Fields: "success" (bool), "html" (string, only if success), "error"
 // (string, only if !success).
-extern const uint32 kMsgNewsFetched;
+inline constexpr uint32 kMsgNewsFetched = 'nwsF';
 
 namespace NewsFetcher {
 

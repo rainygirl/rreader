@@ -5,7 +5,6 @@
 
 #include "HttpFetch.h"
 
-const uint32 kMsgNewsFetched = 'nwsF';
 
 namespace {
 

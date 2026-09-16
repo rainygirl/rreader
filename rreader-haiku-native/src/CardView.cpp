@@ -2,6 +2,7 @@
 
 #include <Font.h>
 #include <Message.h>
+#include <Picture.h>
 #include <Messenger.h>
 #include <Window.h>
 
@@ -27,6 +28,14 @@ const float kTopPaddingRight = 14.0f;
 const float kTopInnerGap = 10.0f;
 const float kSubPaddingV = 7.0f;
 const float kSubPaddingH = 14.0f;
+
+// CSS line boxes are font-size * line-height, with the glyph box centered
+// in them -- not (ascent + descent + leading) * line-height.
+float LineBoxBaseline(float lineTop, float lineHeight, const BFont& font) {
+	font_height fh;
+	font.GetHeight(&fh);
+	return lineTop + (lineHeight - (fh.ascent + fh.descent)) / 2 + fh.ascent;
+}
 } // namespace
 
 CardView::CardView(BRect frame, const SourceCard& card)
@@ -38,6 +47,7 @@ CardView::CardView(BRect frame, const SourceCard& card)
 	  fFaviconBitmap(NULL),
 	  fThumbFailed(false),
 	  fFaviconFailed(false),
+	  fSelectedLink(-1),
 	  fHoveringTop(false),
 	  fHoveringSubIndex(-1) {
 	SetViewColor(kCardBackground);
@@ -52,7 +62,6 @@ CardView::~CardView() {
 
 void CardView::AttachedToWindow() {
 	BView::AttachedToWindow();
-	SetEventMask(B_POINTER_EVENTS, 0);
 
 	if (!fData.thumbUrl.IsEmpty())
 		ImageLoader::LoadAsync(fData.thumbUrl, BMessenger(this));
@@ -105,6 +114,28 @@ BString CardView::TruncateWithEllipsis(
 	return result;
 }
 
+// CSS `object-fit: cover` + `border-radius: 6px`: crop the larger dimension
+// to a square instead of squashing the image, and round the corners by
+// clipping to a rounded rect.
+void CardView::DrawThumb(BRect dest) {
+	BRect source = fThumbBitmap->Bounds();
+	float side = std::min(source.Width(), source.Height());
+	source.left += (source.Width() - side) / 2;
+	source.top += (source.Height() - side) / 2;
+	source.right = source.left + side;
+	source.bottom = source.top + side;
+
+	BPicture clip;
+	BeginPicture(&clip);
+	FillRoundRect(dest, kThumbCornerRadius, kThumbCornerRadius);
+	EndPicture();
+
+	PushState();
+	ClipToPicture(&clip);
+	DrawBitmap(fThumbBitmap, source, dest);
+	PopState();
+}
+
 void CardView::RecomputeHeight() {
 	float innerWidth = kCardWidth - kTopPaddingLeft - kTopPaddingRight;
 	if (!fData.thumbUrl.IsEmpty())
@@ -116,9 +147,7 @@ void CardView::RecomputeHeight() {
 
 	fTitleLines = WrapText(fData.topTitle, titleFont, innerWidth);
 
-	font_height fh;
-	titleFont.GetHeight(&fh);
-	float titleLineHeight = (fh.ascent + fh.descent + fh.leading) * kTitleLineHeight;
+	float titleLineHeight = titleFont.Size() * kTitleLineHeight;
 
 	fHeaderBottom = kCardHeaderPaddingTop + kFaviconSize + kCardHeaderPaddingBottom;
 
@@ -126,12 +155,7 @@ void CardView::RecomputeHeight() {
 		fData.thumbUrl.IsEmpty() ? 0.0f : kThumbSize, fTitleLines.size() * titleLineHeight);
 	fTopAreaBottom = fHeaderBottom + kTopPaddingTop + topInnerHeight + kTopPaddingBottom;
 
-	BFont subFont;
-	subFont.SetSize(kSubFontSize);
-	font_height subFh;
-	subFont.GetHeight(&subFh);
-	float subLineHeight =
-		(subFh.ascent + subFh.descent + subFh.leading) * kSubLineHeight + 2 * kSubPaddingV;
+	float subLineHeight = kSubFontSize * kSubLineHeight + 2 * kSubPaddingV;
 
 	float total = fTopAreaBottom + fData.subs.size() * subLineHeight + kCardBottomPadding;
 	ResizeTo(kCardWidth, total);
@@ -144,6 +168,16 @@ void CardView::Draw(BRect updateRect) {
 	FillRoundRect(bounds, kCardCornerRadius, kCardCornerRadius, B_SOLID_HIGH);
 	SetHighColor(fHoveringTop ? kCardBorderHover : kCardBorder);
 	StrokeRoundRect(bounds, kCardCornerRadius, kCardCornerRadius);
+
+	// .group-top:hover / .group-sub:hover background, also used for the
+	// keyboard selection.
+	int highlighted = fSelectedLink >= 0
+		? fSelectedLink
+		: (fHoveringTop ? 0 : (fHoveringSubIndex >= 0 ? fHoveringSubIndex + 1 : -1));
+	if (highlighted >= 0) {
+		SetHighColor(kHoverBackground);
+		FillRect(LinkFrame(highlighted) & bounds);
+	}
 
 	// ── Header: favicon, source, date ──
 	float hx = kCardHeaderPaddingH;
@@ -176,7 +210,9 @@ void CardView::Draw(BRect updateRect) {
 	float ty = fHeaderBottom + kTopPaddingTop;
 	float titleX = tx;
 	if (fThumbBitmap != NULL) {
-		DrawBitmap(fThumbBitmap, BRect(tx, ty, tx + kThumbSize, ty + kThumbSize));
+		float thumbTop = ty + std::max(0.0f,
+			(fTopAreaBottom - kTopPaddingBottom - ty - kThumbSize) / 2);
+		DrawThumb(BRect(tx, thumbTop, tx + kThumbSize - 1, thumbTop + kThumbSize - 1));
 		titleX = tx + kThumbSize + kTopInnerGap;
 	} else if (!fData.thumbUrl.IsEmpty() && !fThumbFailed) {
 		titleX = tx + kThumbSize + kTopInnerGap; // reserve space while still loading
@@ -186,23 +222,22 @@ void CardView::Draw(BRect updateRect) {
 	titleFont.SetSize(fData.thumbUrl.IsEmpty() ? kTitleFontSize : kTitleFontSizeWithThumb);
 	titleFont.SetFace(fData.thumbUrl.IsEmpty() ? B_REGULAR_FACE : B_BOLD_FACE);
 	SetFont(&titleFont);
-	SetHighColor(fHoveringTop ? kAccent : kTitleText);
-	font_height tfh;
-	titleFont.GetHeight(&tfh);
-	float lineStep = (tfh.ascent + tfh.descent + tfh.leading) * kTitleLineHeight;
-	float titleY = ty + tfh.ascent;
+	SetHighColor(fHoveringTop || fSelectedLink == 0 ? kAccent : kTitleText);
+	float lineStep = titleFont.Size() * kTitleLineHeight;
+	// align-items: center -- the shorter of thumbnail/title is centered
+	// against the taller one.
+	float titleBlockHeight = fTitleLines.size() * lineStep;
+	float titleTop = ty + std::max(0.0f, (fTopAreaBottom - kTopPaddingBottom - ty
+		- titleBlockHeight) / 2);
 	for (size_t i = 0; i < fTitleLines.size(); i++) {
-		DrawString(fTitleLines[i].String(), BPoint(titleX, titleY));
-		titleY += lineStep;
+		DrawString(fTitleLines[i].String(),
+			BPoint(titleX, LineBoxBaseline(titleTop + i * lineStep, lineStep, titleFont)));
 	}
 
 	// ── Sub-article rows ──
 	BFont subFont;
 	subFont.SetSize(kSubFontSize);
-	font_height subFh;
-	subFont.GetHeight(&subFh);
-	float subLineHeight =
-		(subFh.ascent + subFh.descent + subFh.leading) * kSubLineHeight + 2 * kSubPaddingV;
+	float subLineHeight = kSubFontSize * kSubLineHeight + 2 * kSubPaddingV;
 
 	float sy = fTopAreaBottom;
 	for (size_t i = 0; i < fData.subs.size(); i++) {
@@ -210,37 +245,48 @@ void CardView::Draw(BRect updateRect) {
 		StrokeLine(BPoint(0, sy), BPoint(bounds.right, sy));
 
 		SetFont(&subFont);
-		SetHighColor((int)i == fHoveringSubIndex ? kAccent : kSubText);
+		SetHighColor(
+			(int)i == fHoveringSubIndex || fSelectedLink == (int)i + 1 ? kAccent : kSubText);
 		BString line = TruncateWithEllipsis(
 			fData.subs[i].title, subFont, kCardWidth - 2 * kSubPaddingH);
-		DrawString(line.String(), BPoint(kSubPaddingH, sy + kSubPaddingV + subFh.ascent));
+		DrawString(line.String(),
+			BPoint(kSubPaddingH, LineBoxBaseline(sy, subLineHeight, subFont)));
 
 		sy += subLineHeight;
 	}
 }
 
-void CardView::MouseDown(BPoint where) {
-	BRect topRect(0, fHeaderBottom, Bounds().Width(), fTopAreaBottom);
-	if (topRect.Contains(where) && !fData.topUrl.IsEmpty()) {
-		UrlOpener::Open(fData.topUrl);
+int CardView::LinkCount() const {
+	return 1 + (int)fData.subs.size();
+}
+
+BString CardView::LinkUrl(int index) const {
+	if (index == 0)
+		return fData.topUrl;
+	return fData.subs[index - 1].url;
+}
+
+BRect CardView::LinkFrame(int index) const {
+	if (index == 0)
+		return BRect(0, fHeaderBottom, Bounds().Width(), fTopAreaBottom);
+	float height = kSubFontSize * kSubLineHeight + 2 * kSubPaddingV;
+	float top = fTopAreaBottom + (index - 1) * height;
+	return BRect(0, top, Bounds().Width(), top + height);
+}
+
+void CardView::SetSelectedLink(int index) {
+	if (index == fSelectedLink)
 		return;
-	}
+	fSelectedLink = index;
+	Invalidate();
+}
 
-	BFont subFont;
-	subFont.SetSize(kSubFontSize);
-	font_height subFh;
-	subFont.GetHeight(&subFh);
-	float subLineHeight =
-		(subFh.ascent + subFh.descent + subFh.leading) * kSubLineHeight + 2 * kSubPaddingV;
-
-	float sy = fTopAreaBottom;
-	for (size_t i = 0; i < fData.subs.size(); i++) {
-		BRect rowRect(0, sy, Bounds().Width(), sy + subLineHeight);
-		if (rowRect.Contains(where)) {
-			UrlOpener::Open(fData.subs[i].url);
+void CardView::MouseDown(BPoint where) {
+	for (int i = 0; i < LinkCount(); i++) {
+		if (LinkFrame(i).Contains(where) && !LinkUrl(i).IsEmpty()) {
+			UrlOpener::Open(LinkUrl(i));
 			return;
 		}
-		sy += subLineHeight;
 	}
 }
 
@@ -249,25 +295,14 @@ void CardView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage
 	int newHoverSub = -1;
 
 	if (code != B_EXITED_VIEW) {
-		BRect topRect(0, fHeaderBottom, Bounds().Width(), fTopAreaBottom);
-		newHoverTop = topRect.Contains(where);
-
-		if (!newHoverTop) {
-			BFont subFont;
-			subFont.SetSize(kSubFontSize);
-			font_height subFh;
-			subFont.GetHeight(&subFh);
-			float subLineHeight =
-				(subFh.ascent + subFh.descent + subFh.leading) * kSubLineHeight
-				+ 2 * kSubPaddingV;
-			float sy = fTopAreaBottom;
-			for (size_t i = 0; i < fData.subs.size(); i++) {
-				if (BRect(0, sy, Bounds().Width(), sy + subLineHeight).Contains(where)) {
-					newHoverSub = (int)i;
-					break;
-				}
-				sy += subLineHeight;
-			}
+		for (int i = 0; i < LinkCount(); i++) {
+			if (!LinkFrame(i).Contains(where))
+				continue;
+			if (i == 0)
+				newHoverTop = true;
+			else
+				newHoverSub = i - 1;
+			break;
 		}
 	}
 
@@ -279,6 +314,13 @@ void CardView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage
 }
 
 void CardView::MessageReceived(BMessage* message) {
+	// Only the scrolled view itself owns a scroll bar, so the wheel has to be
+	// handed up or it does nothing while the pointer is over a card.
+	if (message->what == B_MOUSE_WHEEL_CHANGED && Parent() != NULL) {
+		Parent()->MessageReceived(message);
+		return;
+	}
+
 	if (message->what != kMsgImageLoaded) {
 		BView::MessageReceived(message);
 		return;

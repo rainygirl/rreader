@@ -2,75 +2,97 @@
 
 #include <Bitmap.h>
 #include <BitmapStream.h>
-#include <MemoryIO.h>
+#include <DataIO.h>
 #include <Message.h>
-#include <OS.h>
 #include <TranslatorRoster.h>
+
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
 
 #include "HttpFetch.h"
 
-const uint32 kMsgImageLoaded = 'imgL';
-
 namespace {
+
+// A thread per image (~80 per tab) made every TLS handshake time out on
+// slower machines; a few workers with reused curl handles finish quickly.
+const int kWorkerCount = 4;
 
 struct LoadJob {
 	BString url;
 	BMessenger target;
 };
 
-int32 LoadThreadFunc(void* cookie) {
-	LoadJob* job = static_cast<LoadJob*>(cookie);
+std::mutex sQueueLock;
+std::condition_variable sQueueCond;
+std::deque<LoadJob> sQueue;
+std::once_flag sStartOnce;
 
-	uint8* data = NULL;
-	size_t size = 0;
-	bool fetched = HttpFetch::GetSyncBinary(job->url, &data, &size);
-
+BBitmap* Decode(uint8* data, size_t size) {
+	BMemoryIO source(data, size);
+	BBitmapStream outStream;
 	BBitmap* bitmap = NULL;
-	if (fetched && size > 0) {
-		BMemoryIO source(data, size);
-		BBitmapStream outStream;
-		status_t status = BTranslatorRoster::Default()->Translate(
-			&source, NULL, NULL, &outStream, B_TRANSLATOR_BITMAP);
-		if (status == B_OK)
-			outStream.DetachBitmap(&bitmap);
-	}
-	delete[] data;
+	if (BTranslatorRoster::Default()->Translate(
+			&source, NULL, NULL, &outStream, B_TRANSLATOR_BITMAP) == B_OK)
+		outStream.DetachBitmap(&bitmap);
+	return bitmap;
+}
 
+void Reply(const LoadJob& job, BBitmap* bitmap) {
 	BMessage msg(kMsgImageLoaded);
-	msg.AddString("url", job->url);
-	if (bitmap != NULL) {
-		msg.AddBool("success", true);
-		// Ownership transfers to whoever handles this message (see
-		// CardView::MessageReceived) -- they must delete it eventually.
+	msg.AddString("url", job.url);
+	msg.AddBool("success", bitmap != NULL);
+	if (bitmap != NULL)
 		msg.AddPointer("bitmap", bitmap);
-	} else {
-		msg.AddBool("success", false);
-	}
-	job->target.SendMessage(&msg);
+	if (job.target.SendMessage(&msg) != B_OK)
+		delete bitmap;
+}
 
-	delete job;
-	return 0;
+void WorkerLoop() {
+	while (true) {
+		LoadJob job;
+		{
+			std::unique_lock<std::mutex> lock(sQueueLock);
+			sQueueCond.wait(lock, [] { return !sQueue.empty(); });
+			job = sQueue.front();
+			sQueue.pop_front();
+		}
+		if (!job.target.IsValid())
+			continue;
+
+		uint8* data = NULL;
+		size_t size = 0;
+		BBitmap* bitmap = NULL;
+		if (HttpFetch::GetSyncBinary(job.url, &data, &size))
+			bitmap = Decode(data, size);
+		delete[] data;
+		Reply(job, bitmap);
+	}
+}
+
+void StartWorkers() {
+	BTranslatorRoster::Default(); // load translators once, before workers race for it
+	for (int i = 0; i < kWorkerCount; i++)
+		std::thread(WorkerLoop).detach();
 }
 
 } // namespace
 
 void ImageLoader::LoadAsync(const BString& url, const BMessenger& target) {
 	if (url.IsEmpty()) {
-		BMessage msg(kMsgImageLoaded);
-		msg.AddString("url", url);
-		msg.AddBool("success", false);
-		target.SendMessage(&msg);
+		Reply(LoadJob{url, target}, NULL);
 		return;
 	}
-	LoadJob* job = new LoadJob{url, target};
-	thread_id tid = spawn_thread(LoadThreadFunc, "news-image-load", B_LOW_PRIORITY, job);
-	if (tid < 0) {
-		BMessage msg(kMsgImageLoaded);
-		msg.AddString("url", url);
-		msg.AddBool("success", false);
-		target.SendMessage(&msg);
-		delete job;
-		return;
+	std::call_once(sStartOnce, StartWorkers);
+	{
+		std::lock_guard<std::mutex> lock(sQueueLock);
+		sQueue.push_back(LoadJob{url, target});
 	}
-	resume_thread(tid);
+	sQueueCond.notify_one();
+}
+
+void ImageLoader::CancelPending() {
+	std::lock_guard<std::mutex> lock(sQueueLock);
+	sQueue.clear();
 }
