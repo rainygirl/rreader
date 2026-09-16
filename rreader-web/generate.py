@@ -422,6 +422,7 @@ def _gemini_json(prompt, api_key):
 # ─── HTML Generation ──────────────────────────────────────────────────────────
 
 ACCENT = "#ec8c6f"
+PODCAST_FEED_URL = "https://news.coroke.net/podcast/feed.xml"
 
 ADSENSE_UNIT = """<ins class="adsbygoogle"
      style="display:block"
@@ -630,6 +631,24 @@ def generate_html(all_data, generated_at, briefs=None):
       border-radius: 0;
     }}
 
+    .podcast-btn {{
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      background: rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.55);
+      border-radius: 999px;
+      padding: 5px 12px;
+      text-decoration: none;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }}
+    .podcast-btn:hover {{ background: rgba(255,255,255,0.32); }}
+
     .header-credit {{
       font-size: 12px;
       color: rgba(255,255,255,0.6);
@@ -656,9 +675,24 @@ def generate_html(all_data, generated_at, briefs=None):
       text-decoration: none;
     }}
     .mobile-credit a:hover {{ color: #666; }}
+    .mobile-podcast {{ display: none; }}
+    .mobile-podcast a {{
+      display: block;
+      text-align: center;
+      margin: 10px 16px 0;
+      padding: 10px 16px;
+      background: {ACCENT};
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+      border-radius: 8px;
+    }}
     @media (max-width: 600px) {{
       .header-credit {{ display: none; }}
+      .podcast-btn {{ display: none; }}
       .mobile-credit {{ display: block; }}
+      .mobile-podcast {{ display: block; }}
       #logo {{ display: none; }}
     }}
 
@@ -954,6 +988,7 @@ def generate_html(all_data, generated_at, briefs=None):
     <div class="header-inner">
       <span class="logo" id="logo" style="cursor:pointer">news.coroke.net</span>
       <nav class="tab-nav">{tabs_html}</nav>
+      <a class="podcast-btn" id="podcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">🎧 팟캐스트</a>
       <span class="header-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></span>
       <div class="view-pill">
         <button data-view="card" class="active">카드</button>
@@ -961,12 +996,27 @@ def generate_html(all_data, generated_at, briefs=None):
       </div>
     </div>
   </header>
+  <div class="mobile-podcast"><a id="mobilePodcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">🎧 팟캐스트 구독하기</a></div>
   <div class="mobile-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></div>
   <main>{briefs_html}{sections}
   </main>
   <footer>데이터 소스: 각 매체 공개 RSS / 한국어 번역: Gemini<br><br><a href="https://python.org/" target="_blank" rel="noopener">Powered by Python</a><br>소스코드: <a href="https://github.com/rainygirl/rreader" target="_blank" rel="noopener">github.com/rainygirl/rreader</a><br><br>개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></footer>
   <script>
 (function() {{
+  // On iOS, the podcast:// scheme opens Apple Podcasts straight to this feed
+  // (it just re-reads the same RSS over the podcast:// scheme instead of
+  // https://) so listeners can subscribe without the show needing to be
+  // indexed/searchable in the App Store first. Other platforms just get the
+  // plain feed URL, which the OS/browser can hand off to whichever podcast
+  // app is installed (or the user copies it into one, e.g. Spotify).
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  if (isIOS) {{
+    var podcastHref = '{PODCAST_FEED_URL}'.replace('https://', 'podcast://').replace('http://', 'podcast://');
+    document.querySelectorAll('#podcastBtn, #mobilePodcastBtn').forEach(function(a) {{
+      a.href = podcastHref;
+    }});
+  }}
+
   var currentCat = '{all_data[0][0]}';
   var currentView = 'card';
 
