@@ -1071,7 +1071,12 @@ def main():
 
     now = datetime.datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M KST")
     index_html = generate_html(all_data, now, briefs)
-    (OUTPUT_DIR / "index.html").write_text(index_html, encoding="utf-8")
+    # Write atomically: nginx (open_file_cache, sendfile) may serve a half-written or
+    # stale-length file if index.html is truncated and rewritten in place.
+    out_file = OUTPUT_DIR / "index.html"
+    tmp_file = out_file.with_suffix(".html.tmp")
+    tmp_file.write_text(index_html, encoding="utf-8")
+    os.replace(tmp_file, out_file)
 
     print(f"Generated: output/index.html")
     print(f"Done at {now}")
