@@ -96,12 +96,18 @@ void BriefView::SetWidth(float width) {
 
 void BriefView::Draw(BRect updateRect) {
 	BRect bounds = Bounds();
+	SetDrawingMode(B_OP_OVER);
 	SetHighColor(kCardBorder);
 	StrokeRect(bounds);
 
 	for (size_t i = 0; i < fLayouts.size(); i++) {
 		const Layout& layout = fLayouts[i];
 		const BriefItem& item = fItems[i];
+
+		if ((int)i == fSelectedLink) {
+			SetHighColor(kFocusBackground);
+			FillRect(BRect(1, layout.top, bounds.right - 1, layout.bottom - 1));
+		}
 
 		if (i > 0) {
 			SetHighColor(kItemDivider);
@@ -116,17 +122,14 @@ void BriefView::Draw(BRect updateRect) {
 		number << (int32)(i + 1);
 		SetFont(&fBadgeFont);
 		SetHighColor(255, 255, 255);
-		SetLowColor(kAccent);
 		float numberWidth = fBadgeFont.StringWidth(number.String());
 		DrawString(number.String(), BPoint(badge.left + (kBadgeSize - numberWidth) / 2,
 			Baseline(badge.top, kBadgeSize, fBadgeFont)));
 
 		float textX = kPadH + kTextIndent;
 		float lineTop = layout.top + kItemPadV;
-		SetLowColor(kCardBackground);
 		SetFont(&fTextFont);
-		SetHighColor(
-			(int)i == fHoverIndex || (int)i == fSelectedLink ? kAccent : kTitleText);
+		SetHighColor((int)i == fHoverIndex ? kAccent : kTitleText);
 		for (size_t l = 0; l < layout.lines.size(); l++) {
 			DrawString(layout.lines[l].String(),
 				BPoint(textX, Baseline(lineTop + l * kLineHeight, kLineHeight, fTextFont)));

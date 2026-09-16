@@ -20,7 +20,8 @@ const float kLogoTabGap = 24.0f;
 } // namespace
 
 HeaderView::HeaderView(BRect frame)
-	: BView(frame, "header", B_FOLLOW_LEFT_RIGHT | B_FOLLOW_TOP, B_WILL_DRAW | B_FRAME_EVENTS) {
+	: BView(frame, "header", B_FOLLOW_LEFT_RIGHT | B_FOLLOW_TOP,
+		  B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE) {
 	SetViewColor(kAccent);
 }
 
@@ -90,8 +91,13 @@ void HeaderView::Draw(BRect updateRect) {
 	font_height tfh;
 	tabFont.GetHeight(&tfh);
 
+	SetDrawingMode(B_OP_ALPHA);
 	for (size_t i = 0; i < fTabs.size(); i++) {
 		bool active = fTabs[i].key == fActiveKey;
+		if (active && IsFocus()) {
+			SetHighColor(255, 255, 255, 64);
+			FillRoundRect(fTabs[i].rect, 4, 4);
+		}
 		SetHighColor(active ? kHeaderText : kHeaderTextDim);
 		float textY = fTabs[i].rect.top + (fTabs[i].rect.Height() / 2) + tfh.ascent / 2 - 1;
 		DrawString(fTabs[i].title.String(), BPoint(fTabs[i].rect.left + kTabPaddingH, textY));
@@ -106,13 +112,53 @@ void HeaderView::Draw(BRect updateRect) {
 	}
 }
 
+void HeaderView::SelectTab(size_t index, bool keyboard) {
+	BMessage msg(kMsgTabSelected);
+	msg.AddString("key", fTabs[index].key);
+	msg.AddBool("keyboard", keyboard);
+	Window()->PostMessage(&msg);
+}
+
 void HeaderView::MouseDown(BPoint where) {
 	for (size_t i = 0; i < fTabs.size(); i++) {
 		if (fTabs[i].rect.Contains(where)) {
-			BMessage msg(kMsgTabSelected);
-			msg.AddString("key", fTabs[i].key);
-			Window()->PostMessage(&msg);
+			SelectTab(i, false);
 			return;
 		}
 	}
+}
+
+void HeaderView::KeyDown(const char* bytes, int32 numBytes) {
+	if (numBytes < 1 || fTabs.empty()) {
+		BView::KeyDown(bytes, numBytes);
+		return;
+	}
+
+	size_t active = 0;
+	for (size_t i = 0; i < fTabs.size(); i++) {
+		if (fTabs[i].key == fActiveKey)
+			active = i;
+	}
+
+	switch (bytes[0]) {
+		case B_LEFT_ARROW:
+			if (active > 0)
+				SelectTab(active - 1, true);
+			return;
+		case B_RIGHT_ARROW:
+			if (active + 1 < fTabs.size())
+				SelectTab(active + 1, true);
+			return;
+		case B_DOWN_ARROW:
+		case B_ENTER:
+		case B_SPACE:
+			Window()->PostMessage(kMsgFocusContent);
+			return;
+	}
+	BView::KeyDown(bytes, numBytes);
+}
+
+void HeaderView::MakeFocus(bool focus) {
+	BView::MakeFocus(focus);
+	Invalidate();
 }

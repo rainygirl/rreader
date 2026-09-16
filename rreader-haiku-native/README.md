@@ -27,8 +27,10 @@ secondary architecture's GCC 13).
   a wide one, recalculated live on resize. This is actually *more*
   flexible than the web version, which caps at 3 columns inside a
   1200px-max-width container.
-- Arrow keys walk every link on the page (brief box first, then the cards
-  in layout order), scrolling the selection into view; Enter/Space opens it.
+- Keyboard: arrow keys move the focus between links by on-screen position
+  (up/down within a column, left/right to the neighboring column), scrolling
+  it into view; Enter/Space opens it. Up from the top link moves the focus
+  to the tab bar, where Left/Right switch categories and Down returns.
 - Every link (top story, sub-articles) opens in the system's default
   browser (`src/UrlOpener.cpp`, via `be_roster->Launch()`), never inside
   the app.

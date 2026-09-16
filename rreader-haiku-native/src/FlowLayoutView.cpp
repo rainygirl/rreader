@@ -1,11 +1,10 @@
 #include "FlowLayoutView.h"
 
 #include <ScrollBar.h>
+#include <Window.h>
 
 #include <algorithm>
 #include <cmath>
-
-#include <utility>
 
 #include "BriefView.h"
 #include "Colors.h"
@@ -18,8 +17,7 @@ FlowLayoutView::FlowLayoutView(BRect frame, const char* name)
 	  fBrief(NULL),
 	  fContentHeight(0),
 	  fSelectedView(-1),
-	  fSelectedLink(-1),
-	  fRelayouting(false) {
+	  fSelectedLink(-1) {
 	SetViewColor(NewsColors::kPageBackground);
 }
 
@@ -53,12 +51,6 @@ float FlowLayoutView::VisibleHeight() const {
 }
 
 void FlowLayoutView::Relayout() {
-	// ResizeTo below triggers FrameResized, which calls back in here; without
-	// this guard the two ping-pong forever over a sub-pixel height difference.
-	if (fRelayouting)
-		return;
-	fRelayouting = true;
-
 	float width = Bounds().Width();
 	float usableWidth = width - 2 * NewsMetrics::kGridPaddingH;
 
@@ -120,7 +112,6 @@ void FlowLayoutView::Relayout() {
 		scrollBar->SetSteps(24, visibleHeight);
 	}
 
-	fRelayouting = false;
 	Invalidate();
 }
 
@@ -139,42 +130,94 @@ std::vector<BView*> FlowLayoutView::LinkViews() const {
 	return views;
 }
 
-void FlowLayoutView::MoveSelection(int delta) {
+// Moves the keyboard focus to the nearest link in `direction`, by position
+// on screen: up/down stay in the same column, left/right jump to the
+// neighboring column's link at the closest height.
+void FlowLayoutView::MoveSelection(Direction direction) {
 	std::vector<BView*> views = LinkViews();
-	if (views.empty())
-		return;
 
-	// Flatten (view, link) pairs so a single index can walk the whole page.
-	std::vector<std::pair<int, int>> links;
+	struct Link {
+		int view;
+		int index;
+		BRect frame;
+	};
+	std::vector<Link> links;
 	for (size_t v = 0; v < views.size(); v++) {
 		LinkSource* source = dynamic_cast<LinkSource*>(views[v]);
-		for (int l = 0; source != NULL && l < source->LinkCount(); l++)
-			links.push_back(std::make_pair((int)v, l));
+		for (int l = 0; source != NULL && l < source->LinkCount(); l++) {
+			BRect frame = source->LinkFrame(l);
+			frame.OffsetBy(views[v]->Frame().LeftTop());
+			links.push_back(Link{(int)v, l, frame});
+		}
 	}
 	if (links.empty())
 		return;
 
 	int current = -1;
 	for (size_t i = 0; i < links.size(); i++) {
-		if (links[i].first == fSelectedView && links[i].second == fSelectedLink) {
+		if (links[i].view == fSelectedView && links[i].index == fSelectedLink)
 			current = (int)i;
-			break;
+	}
+
+	int next = -1;
+	if (current < 0) {
+		next = 0;
+	} else {
+		const BRect& from = links[current].frame;
+		const float kSlop = 2.0f;
+		float bestPrimary = 0, bestSecondary = 0;
+		for (size_t i = 0; i < links.size(); i++) {
+			if ((int)i == current)
+				continue;
+			const BRect& to = links[i].frame;
+			bool overlapsH = to.left < from.right - kSlop && to.right > from.left + kSlop;
+			float primary, secondary;
+			switch (direction) {
+				case kDown:
+					if (!overlapsH || to.top < from.bottom - kSlop)
+						continue;
+					primary = to.top - from.bottom;
+					secondary = fabs(to.left - from.left);
+					break;
+				case kUp:
+					if (!overlapsH || to.bottom > from.top + kSlop)
+						continue;
+					primary = from.top - to.bottom;
+					secondary = fabs(to.left - from.left);
+					break;
+				case kRight:
+					if (to.left < from.right - kSlop)
+						continue;
+					primary = to.left - from.right;
+					secondary = fabs((to.top + to.bottom) - (from.top + from.bottom)) / 2;
+					break;
+				case kLeft:
+				default:
+					if (to.right > from.left + kSlop)
+						continue;
+					primary = from.left - to.right;
+					secondary = fabs((to.top + to.bottom) - (from.top + from.bottom)) / 2;
+					break;
+			}
+			if (next < 0 || primary < bestPrimary - kSlop
+				|| (fabs(primary - bestPrimary) <= kSlop && secondary < bestSecondary)) {
+				next = (int)i;
+				bestPrimary = primary;
+				bestSecondary = secondary;
+			}
 		}
+		if (next < 0) {
+			if (direction == kUp && Window() != NULL)
+				Window()->PostMessage(kMsgFocusTabs);
+			return;
+		}
+		if (LinkSource* old = dynamic_cast<LinkSource*>(views[fSelectedView]))
+			old->SetSelectedLink(-1);
 	}
 
-	int next = current < 0 ? (delta > 0 ? 0 : (int)links.size() - 1) : current + delta;
-	next = std::max(0, std::min((int)links.size() - 1, next));
-
-	for (BView* view : views) {
-		LinkSource* source = dynamic_cast<LinkSource*>(view);
-		if (source != NULL)
-			source->SetSelectedLink(-1);
-	}
-
-	fSelectedView = links[next].first;
-	fSelectedLink = links[next].second;
-	LinkSource* selected = dynamic_cast<LinkSource*>(views[fSelectedView]);
-	selected->SetSelectedLink(fSelectedLink);
+	fSelectedView = links[next].view;
+	fSelectedLink = links[next].index;
+	dynamic_cast<LinkSource*>(views[fSelectedView])->SetSelectedLink(fSelectedLink);
 	ScrollToSelection();
 }
 
@@ -217,26 +260,48 @@ void FlowLayoutView::KeyDown(const char* bytes, int32 numBytes) {
 
 	switch (bytes[0]) {
 		case B_UP_ARROW:
-		case B_LEFT_ARROW:
-			MoveSelection(-1);
+			MoveSelection(kUp);
 			return;
 		case B_DOWN_ARROW:
+			MoveSelection(kDown);
+			return;
+		case B_LEFT_ARROW:
+			MoveSelection(kLeft);
+			return;
 		case B_RIGHT_ARROW:
-			MoveSelection(1);
+			MoveSelection(kRight);
 			return;
 		case B_ENTER:
 		case B_SPACE:
 			ActivateSelection();
 			return;
 		case B_PAGE_UP:
-			MoveSelection(-8);
+			for (int i = 0; i < 8; i++)
+				MoveSelection(kUp);
 			return;
 		case B_PAGE_DOWN:
-			MoveSelection(8);
+			for (int i = 0; i < 8; i++)
+				MoveSelection(kDown);
 			return;
 	}
 
 	BView::KeyDown(bytes, numBytes);
+}
+
+void FlowLayoutView::ClearSelection() {
+	std::vector<BView*> views = LinkViews();
+	if (fSelectedView >= 0 && fSelectedView < (int)views.size()) {
+		if (LinkSource* source = dynamic_cast<LinkSource*>(views[fSelectedView]))
+			source->SetSelectedLink(-1);
+	}
+	fSelectedView = -1;
+	fSelectedLink = -1;
+}
+
+void FlowLayoutView::FocusFirstLink() {
+	MakeFocus(true);
+	ClearSelection();
+	MoveSelection(kDown);
 }
 
 void FlowLayoutView::MakeFocus(bool focus) {

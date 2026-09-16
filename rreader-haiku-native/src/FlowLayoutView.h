@@ -12,6 +12,10 @@
 #include <View.h>
 #include <vector>
 
+// Sent to the window when Up is pressed on the topmost link, so the focus
+// can move into the tab bar.
+inline constexpr uint32 kMsgFocusTabs = 'fcsT';
+
 class BriefView;
 
 class FlowLayoutView : public BView {
@@ -40,15 +44,20 @@ public:
 	void Relayout();
 
 	void FrameResized(float width, float height) override;
-	// Arrow keys walk every link on the page; Enter/Space opens the
-	// selected one in the browser.
+	// Arrow keys move the focus between links by on-screen position;
+	// Enter/Space opens the focused one in the browser.
 	void KeyDown(const char* bytes, int32 numBytes) override;
 	void MakeFocus(bool focus) override;
+
+	// Focuses the view and selects the first link on the page.
+	void FocusFirstLink();
+	void ClearSelection();
 
 private:
 	float VisibleHeight() const;
 	std::vector<BView*> LinkViews() const;
-	void MoveSelection(int delta);
+	enum Direction { kUp, kDown, kLeft, kRight };
+	void MoveSelection(Direction direction);
 	void ScrollToSelection();
 	void ActivateSelection();
 
@@ -57,7 +66,6 @@ private:
 	float fContentHeight; // total height needed, used to size ourselves for BScrollView
 	int fSelectedView;    // index into LinkViews(), -1 if none
 	int fSelectedLink;    // index within that view's links
-	bool fRelayouting;
 };
 
 #endif // NEWS_COROKE_FLOW_LAYOUT_VIEW_H

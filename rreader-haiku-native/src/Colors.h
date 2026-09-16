@@ -35,6 +35,9 @@ static const rgb_color kDivider = {0xf2, 0xf2, 0xf2, 255};
 // .group-top:hover / .group-sub:hover background: #fdf6f4
 static const rgb_color kHoverBackground = {0xfd, 0xf6, 0xf4, 255};
 
+// keyboard focus row: ACCENT at ~25% over white
+static const rgb_color kFocusBackground = {0xfa, 0xe2, 0xdb, 255};
+
 // header text on the accent background
 static const rgb_color kHeaderText = {0xff, 0xff, 0xff, 255};
 static const rgb_color kHeaderTextDim = {0xff, 0xff, 0xff, 191}; // rgba(255,255,255,0.75)

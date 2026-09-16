@@ -8,8 +8,12 @@
 #include <View.h>
 #include <vector>
 
-// Sent to the header's target when a tab is clicked. Field: "key" (string).
+// Sent to the window when a tab is chosen. Fields: "key" (string),
+// "keyboard" (bool, true when chosen with the arrow keys so focus stays in
+// the tab bar).
 inline constexpr uint32 kMsgTabSelected = 'tabS';
+// Sent to the window when Down/Enter leaves the tab bar for the content.
+inline constexpr uint32 kMsgFocusContent = 'fcsC';
 
 class HeaderView : public BView {
 public:
@@ -23,6 +27,9 @@ public:
 
 	void Draw(BRect updateRect) override;
 	void MouseDown(BPoint where) override;
+	// Left/Right switch categories, Down/Enter return to the content.
+	void KeyDown(const char* bytes, int32 numBytes) override;
+	void MakeFocus(bool focus) override;
 	void FrameResized(float width, float height) override;
 
 private:
@@ -33,6 +40,7 @@ private:
 	};
 
 	void LayoutTabs();
+	void SelectTab(size_t index, bool keyboard);
 
 	std::vector<Tab> fTabs;
 	BString fActiveKey;

@@ -3,6 +3,7 @@
 #include <Application.h>
 #include <Font.h>
 #include <Message.h>
+#include <Screen.h>
 #include <ScrollBar.h>
 
 #include "BriefView.h"
@@ -29,9 +30,15 @@ MainWindow::MainWindow()
 	  fFlowView(NULL),
 	  fStatusView(NULL),
 	  fStatusHidden(false) {
+	// Keep the whole window on screen, or keyboard focus can land below the
+	// visible part of the display.
+	BRect screen = BScreen(this).Frame();
+	float maxHeight = screen.bottom - Frame().top - 8;
+	if (Frame().Height() > maxHeight)
+		ResizeTo(Frame().Width(), maxHeight);
 	BRect bounds = Bounds();
 
-	fHeader = new HeaderView(BRect(0, 0, bounds.Width(), kHeaderHeight));
+	fHeader = new HeaderView(BRect(0, 0, bounds.Width(), kHeaderHeight - 1));
 	AddChild(fHeader);
 
 	// The scroll view sizes itself (and its scroll bar) around the target's
@@ -87,10 +94,19 @@ void MainWindow::MessageReceived(BMessage* message) {
 			break;
 		case kMsgTabSelected: {
 			BString key;
+			bool keyboard = false;
+			message->FindBool("keyboard", &keyboard);
 			if (message->FindString("key", &key) == B_OK)
-				ShowCategory(key);
+				ShowCategory(key, !keyboard);
 			break;
 		}
+		case kMsgFocusTabs:
+			fFlowView->ClearSelection();
+			fHeader->MakeFocus(true);
+			break;
+		case kMsgFocusContent:
+			fFlowView->FocusFirstLink();
+			break;
 		default:
 			BWindow::MessageReceived(message);
 	}
@@ -129,7 +145,7 @@ void MainWindow::HandleFetchResult(BMessage* message) {
 	ShowCategory(fCategories[0].key);
 }
 
-void MainWindow::ShowCategory(const BString& key) {
+void MainWindow::ShowCategory(const BString& key, bool focusContent) {
 	const Category* found = NULL;
 	for (size_t i = 0; i < fCategories.size(); i++) {
 		if (fCategories[i].key == key) {
@@ -163,7 +179,8 @@ void MainWindow::ShowCategory(const BString& key) {
 	}
 	fFlowView->ScrollTo(0, 0);
 	fFlowView->Relayout();
-	fFlowView->MakeFocus(true);
+	if (focusContent)
+		fFlowView->MakeFocus(true);
 
 	if (found->cards.empty())
 		ShowStatus("이 카테고리에는 표시할 기사가 없습니다.");
@@ -174,7 +191,7 @@ void MainWindow::ShowCategory(const BString& key) {
 void MainWindow::FrameResized(float width, float height) {
 	BWindow::FrameResized(width, height);
 
-	fHeader->ResizeTo(width, kHeaderHeight);
+	fHeader->ResizeTo(width, kHeaderHeight - 1);
 	fFlowView->Relayout();
 
 	fStatusView->ResizeTo(width, 40);

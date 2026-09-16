@@ -163,20 +163,23 @@ void CardView::RecomputeHeight() {
 
 void CardView::Draw(BRect updateRect) {
 	BRect bounds = Bounds();
+	SetDrawingMode(B_OP_OVER);
 
 	SetHighColor(kCardBackground);
 	FillRoundRect(bounds, kCardCornerRadius, kCardCornerRadius, B_SOLID_HIGH);
 	SetHighColor(fHoveringTop ? kCardBorderHover : kCardBorder);
 	StrokeRoundRect(bounds, kCardCornerRadius, kCardCornerRadius);
 
-	// .group-top:hover / .group-sub:hover background, also used for the
-	// keyboard selection.
-	int highlighted = fSelectedLink >= 0
-		? fSelectedLink
-		: (fHoveringTop ? 0 : (fHoveringSubIndex >= 0 ? fHoveringSubIndex + 1 : -1));
-	if (highlighted >= 0) {
+	// .group-top:hover / .group-sub:hover background; the keyboard focus gets
+	// a stronger tint instead of a text color change.
+	int hovered = fHoveringTop ? 0 : (fHoveringSubIndex >= 0 ? fHoveringSubIndex + 1 : -1);
+	if (hovered >= 0 && hovered != fSelectedLink) {
 		SetHighColor(kHoverBackground);
-		FillRect(LinkFrame(highlighted) & bounds);
+		FillRect(LinkFrame(hovered).InsetByCopy(1, 0) & bounds.InsetByCopy(1, 1));
+	}
+	if (fSelectedLink >= 0) {
+		SetHighColor(kFocusBackground);
+		FillRect(LinkFrame(fSelectedLink).InsetByCopy(1, 0) & bounds.InsetByCopy(1, 1));
 	}
 
 	// ── Header: favicon, source, date ──
@@ -222,7 +225,7 @@ void CardView::Draw(BRect updateRect) {
 	titleFont.SetSize(fData.thumbUrl.IsEmpty() ? kTitleFontSize : kTitleFontSizeWithThumb);
 	titleFont.SetFace(fData.thumbUrl.IsEmpty() ? B_REGULAR_FACE : B_BOLD_FACE);
 	SetFont(&titleFont);
-	SetHighColor(fHoveringTop || fSelectedLink == 0 ? kAccent : kTitleText);
+	SetHighColor(fHoveringTop ? kAccent : kTitleText);
 	float lineStep = titleFont.Size() * kTitleLineHeight;
 	// align-items: center -- the shorter of thumbnail/title is centered
 	// against the taller one.
@@ -245,8 +248,7 @@ void CardView::Draw(BRect updateRect) {
 		StrokeLine(BPoint(0, sy), BPoint(bounds.right, sy));
 
 		SetFont(&subFont);
-		SetHighColor(
-			(int)i == fHoveringSubIndex || fSelectedLink == (int)i + 1 ? kAccent : kSubText);
+		SetHighColor((int)i == fHoveringSubIndex ? kAccent : kSubText);
 		BString line = TruncateWithEllipsis(
 			fData.subs[i].title, subFont, kCardWidth - 2 * kSubPaddingH);
 		DrawString(line.String(),

@@ -26,7 +26,7 @@ public:
 private:
 	void StartFetch();
 	void HandleFetchResult(BMessage* message);
-	void ShowCategory(const BString& key);
+	void ShowCategory(const BString& key, bool focusContent = true);
 	void ShowStatus(const char* text);
 	void HideStatus();
 
