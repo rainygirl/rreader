@@ -417,7 +417,6 @@ def generate_html(all_data, generated_at, briefs=None):
         <li><a href="{esc(it['url'])}" target="_blank" rel="noopener">{esc(it['summary'])}</a><span class="brief-source">{esc(it['source'])}</span></li>"""
         briefs_html += f"""
     <section class="brief" data-cat="{cat_key}" style="display:none">
-      <div class="brief-head">{esc(cat_title)} 핵심 뉴스 3줄</div>
       <ol class="brief-list">{lis}
       </ol>
     </section>"""
@@ -692,17 +691,8 @@ def generate_html(all_data, generated_at, briefs=None):
     .brief {{
       margin: 12px 16px 0;
       background: #fff;
-      border: 1px solid #f3d5cb;
-      border-left: 4px solid {ACCENT};
-      border-radius: 10px;
-      padding: 14px 18px 12px;
-    }}
-    .brief-head {{
-      font-size: 13px;
-      font-weight: 700;
-      color: {ACCENT};
-      letter-spacing: -0.3px;
-      margin-bottom: 8px;
+      border: 1px solid #e8e8e8;
+      padding: 8px 18px;
     }}
     .brief-list {{
       list-style: none;
@@ -746,7 +736,7 @@ def generate_html(all_data, generated_at, briefs=None):
       white-space: nowrap;
     }}
     @media (max-width: 600px) {{
-      .brief {{ margin: 8px 8px 0; padding: 12px 14px 10px; }}
+      .brief {{ margin: 8px 8px 0; padding: 6px 14px; }}
       .brief-list li {{ font-size: 14px; }}
     }}
 
