@@ -1,0 +1,9 @@
+[project]
+name = "rreader-podcast"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = [
+    "edge-tts>=6.1.0",
+    "mutagen>=1.47.0",
+    "pillow>=10.0.0",
+]
