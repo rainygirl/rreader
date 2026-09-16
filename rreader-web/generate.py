@@ -1019,6 +1019,32 @@ def generate_html(all_data, generated_at, briefs=None):
     footer a {{
       color: #666;
     }}
+
+    /* ── Dark mode (follows OS/browser setting; header keeps its accent colors) ── */
+    @media (prefers-color-scheme: dark) {{
+      body {{ background: #141518; color: #ddd; }}
+      .mobile-credit {{ background: #141518; color: #777; }}
+      .mobile-credit a {{ color: #777; }}
+      .mobile-credit a:hover {{ color: #aaa; }}
+      .brief {{ background: #1d1e22; border-color: #2c2d32; }}
+      .brief-list li {{ color: #e4e4e4; }}
+      .brief-list li + li {{ border-top-color: #28292e; }}
+      .brief-source {{ color: #777; }}
+      .group-card {{ background: #1d1e22; border-color: #2c2d32; }}
+      .group-card:hover {{ box-shadow: 0 3px 14px rgba(0,0,0,0.45); border-color: #3a3b41; }}
+      .group-source, .group-top-title {{ color: #e8e8e8; }}
+      .group-date, .group-sub-date {{ color: #6f7076; }}
+      .group-top:hover {{ background: #2a2522; }}
+      .group-sub {{ color: #b4b5ba; border-top-color: #28292e; }}
+      .group-sub:hover {{ background: #2a2522; color: #f0f0f0; }}
+      .list-row {{ border-bottom-color: #26272c; }}
+      .list-row:hover {{ background: #1f2024; }}
+      .list-num {{ color: #55565c; }}
+      .list-date {{ color: #6f7076; }}
+      .list-title {{ color: #e4e4e4; }}
+      footer {{ color: #777; }}
+      footer a {{ color: #999; }}
+    }}
   </style>
 </head>
 <body>
