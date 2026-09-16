@@ -29,6 +29,16 @@ OG_CACHE_FILE = BASE_DIR / "cache" / "og_images.json"
 BRIEF_CACHE_FILE = BASE_DIR / "cache" / "briefs.json"
 OUTPUT_DIR = BASE_DIR / "output"
 FEEDS_FILE = BASE_DIR / "feeds.json"
+ASSETS_DIR = BASE_DIR / "assets"
+# PWA assets (icons/manifest/service worker) copied into OUTPUT_DIR on every
+# run, so a fresh checkout + run.sh always has them -- see ASSETS_DIR.
+PWA_ASSET_FILES = [
+    "manifest.json",
+    "sw.js",
+    "icon-192.png",
+    "icon-512.png",
+    "icon-maskable-512.png",
+]
 GEMINI_CONFIG_FILE = Path.home() / ".rreader_gemini_config.json"
 
 CATEGORIES = ["tech", "news", "economy"]
@@ -583,6 +593,9 @@ def generate_html(all_data, generated_at, briefs=None):
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>news.coroke.net</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="theme-color" content="{ACCENT}">
   <meta property="og:title" content="news.coroke.net" />
   <meta property="og:site_name" content="news.coroke.net" />
   <meta property="og:description" content="전세계 IT, AI, 기술, 국제뉴스를 한국어로" />
@@ -1145,6 +1158,15 @@ def generate_html(all_data, generated_at, briefs=None):
   showPane();
 }})();
   </script>
+  <script>
+    // Registers the service worker so Chrome/Edge treat the site as
+    // installable (PWA "Install" prompt in the address bar / menu).
+    if ('serviceWorker' in navigator) {{
+      window.addEventListener('load', function() {{
+        navigator.serviceWorker.register('/sw.js').catch(function() {{}});
+      }});
+    }}
+  </script>
 </body>
 </html>"""
 
@@ -1152,8 +1174,24 @@ def generate_html(all_data, generated_at, briefs=None):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 
+def copy_pwa_assets():
+    """Copy the PWA manifest/service worker/icons from ASSETS_DIR into
+    OUTPUT_DIR. A missing source file is a warning, not a hard failure --
+    the site still works without PWA install support."""
+    for name in PWA_ASSET_FILES:
+        src = ASSETS_DIR / name
+        if not src.exists():
+            print(f"[warn] PWA asset missing, skipping: {src}")
+            continue
+        dst = OUTPUT_DIR / name
+        tmp = dst.with_suffix(dst.suffix + ".tmp")
+        tmp.write_bytes(src.read_bytes())
+        os.replace(tmp, dst)
+
+
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    copy_pwa_assets()
 
     # Load feeds config
     if not FEEDS_FILE.exists():
