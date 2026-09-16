@@ -350,7 +350,7 @@ def generate_html(all_data, generated_at):
                 else ""
             )
             if card_idx == 5:
-                cards += f'\n        <div class="ad-card">{ADSENSE_UNIT}</div>'
+                cards += f'\n        <div class="ad-card"><template class="ad-tpl">{ADSENSE_UNIT}</template></div>'
             cards += f"""
         <div class="group-card">
           <div class="group-header">
@@ -386,7 +386,7 @@ def generate_html(all_data, generated_at):
                 else ""
             )
             if i in (6, 12):
-                rows += '\n        <div class="ad-list"><ins class="adsbygoogle" style="display:block" data-ad-format="fluid" data-ad-layout-key="-fb+5w+4e-db+86" data-ad-client="ca-pub-2939993747600082" data-ad-slot="1893036982"></ins></div>'
+                rows += '\n        <div class="ad-list"><template class="ad-tpl"><ins class="adsbygoogle" style="display:block" data-ad-format="fluid" data-ad-layout-key="-fb+5w+4e-db+86" data-ad-client="ca-pub-2939993747600082" data-ad-slot="1893036982"></ins></template></div>'
             rows += f"""
         <a class="list-row" href="{esc(e['url'])}" target="_blank" rel="noopener">
           <span class="list-num">{i}</span>
@@ -763,14 +763,16 @@ def generate_html(all_data, generated_at):
   var currentCat = '{all_data[0][0]}';
   var currentView = 'card';
 
+  // Ad units live in inert <template> tags until their pane is shown. adsbygoogle.push({{}})
+  // always fills the first status-less ins.adsbygoogle in DOM order, so a live ins inside a
+  // hidden pane would swallow the push and fail with availableWidth=0.
   function pushPaneAds(pane, retries) {{
     var hasPending = false;
-    pane.querySelectorAll('ins.adsbygoogle').forEach(function(ins) {{
-      if (ins.dataset.adsbygoogleStatus) return;
-      if (ins.offsetWidth >= 250) {{
-        var fresh = ins.cloneNode(false);
-        ins.parentNode.replaceChild(fresh, ins);
-        void fresh.offsetWidth; // force reflow so AdSense can measure width correctly
+    pane.querySelectorAll('template.ad-tpl').forEach(function(tpl) {{
+      var holder = tpl.parentNode;
+      if (holder.offsetWidth >= 250) {{
+        holder.appendChild(tpl.content.cloneNode(true));
+        holder.removeChild(tpl);
         (window.adsbygoogle = window.adsbygoogle || []).push({{}});
       }} else {{
         hasPending = true;
