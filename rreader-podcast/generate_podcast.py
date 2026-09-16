@@ -34,6 +34,7 @@ from xml.sax.saxutils import escape
 import edge_tts
 import numpy as np
 from mutagen.mp3 import MP3
+from PIL import Image, ImageDraw, ImageFont
 from pydub import AudioSegment
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -42,10 +43,10 @@ BASE_DIR = Path(__file__).parent
 BRIEFS_FILE = BASE_DIR.parent / "rreader-web" / "cache" / "briefs.json"
 OUTPUT_DIR = BASE_DIR / "output"
 EPISODES_DIR = OUTPUT_DIR / "episodes"
+COVERS_DIR = OUTPUT_DIR / "covers"
 MANIFEST_FILE = OUTPUT_DIR / "episodes.json"
 FEED_FILE = OUTPUT_DIR / "feed.xml"
-COVER_SRC = BASE_DIR / "assets" / "cover.jpg"
-COVER_OUT = OUTPUT_DIR / "cover.jpg"
+COVER_OUT = OUTPUT_DIR / "cover.jpg"  # "show" cover; always today's, mirrors the latest episode's
 TIMEZONE = datetime.timezone(datetime.timedelta(hours=9))
 
 # Change this if you host the feed somewhere else (see DISTRIBUTION-GUIDE.md).
@@ -80,6 +81,78 @@ MAX_FEED_ITEMS = 60  # extra safety cap on top of RETENTION_DAYS
 RETENTION_DAYS = 14  # delete episodes (mp3 + feed entry) older than this
 
 WEEKDAY_KO = ["월", "화", "수", "목", "금", "토", "일"]
+
+ACCENT = (236, 140, 111)  # #ec8c6f, matches rreader-web's header color
+COVER_SIZE = 1400  # Apple requires square, 1400-3000px per side
+
+
+# ─── Cover art ────────────────────────────────────────────────────────────────
+
+
+def _find_font(size, bold=True):
+    candidates = [
+        "/System/Library/Fonts/Helvetica.ttc",  # macOS
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Debian/Ubuntu
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for path in candidates:
+        if Path(path).exists():
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _text_height(draw, text, font):
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[3] - bbox[1]
+
+
+def _draw_centered(draw, text, y, font, fill):
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    draw.text(((COVER_SIZE - w) / 2 - bbox[0], y - bbox[1]), text, font=font, fill=fill)
+
+
+def generate_cover(today, out_path):
+    """
+    Square cover art in the site's accent color, gradient background, with
+    the episode date and "news.coroke.net" as two centered lines -- so each
+    day's episode gets its own dated artwork.
+    """
+    # Diagonal gradient: accent color, lighter top-left to darker bottom-right.
+    light = tuple(min(255, int(c + (255 - c) * 0.35)) for c in ACCENT)
+    dark = tuple(max(0, int(c * 0.55)) for c in ACCENT)
+    y, x = np.mgrid[0:COVER_SIZE, 0:COVER_SIZE]
+    t = (x.astype(np.float64) + y) / (2 * (COVER_SIZE - 1))
+    grad = np.empty((COVER_SIZE, COVER_SIZE, 3), dtype=np.uint8)
+    for i in range(3):
+        grad[..., i] = (light[i] + (dark[i] - light[i]) * t).astype(np.uint8)
+    img = Image.fromarray(grad, "RGB")
+    draw = ImageDraw.Draw(img)
+
+    date_text = f"{today.year}.{today.month}.{today.day}"
+    site_text = "news.coroke.net"
+    date_font = _find_font(150)
+    site_font = _find_font(70)
+
+    gap = 36
+    date_h = _text_height(draw, date_text, date_font)
+    site_h = _text_height(draw, site_text, site_font)
+    top = (COVER_SIZE - (date_h + gap + site_h)) / 2
+
+    _draw_centered(draw, date_text, top, date_font, (255, 255, 255))
+    _draw_centered(draw, site_text, top + date_h + gap, site_font, (255, 255, 255))
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    img.save(tmp_path, "JPEG", quality=90)
+    os.replace(tmp_path, out_path)
 
 
 # ─── Script building ──────────────────────────────────────────────────────────
@@ -225,11 +298,11 @@ def prune_old_episodes(manifest, today):
         else:
             kept.append(ep)
     for ep in dropped:
-        mp3_path = EPISODES_DIR / ep["filename"]
-        try:
-            mp3_path.unlink(missing_ok=True)
-        except OSError as e:
-            print(f"  [warn] could not delete {mp3_path}: {e}")
+        for path in (EPISODES_DIR / ep["filename"], COVERS_DIR / f"{ep['date']}.jpg"):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as e:
+                print(f"  [warn] could not delete {path}: {e}")
     if dropped:
         print(f"Pruned {len(dropped)} episode(s) older than {RETENTION_DAYS} days: "
               + ", ".join(ep["date"] for ep in dropped))
@@ -240,6 +313,7 @@ def build_feed_xml(manifest):
     items_xml = ""
     for ep in manifest[:MAX_FEED_ITEMS]:
         pub_dt = datetime.datetime.fromisoformat(ep["published_at"])
+        cover_url = ep.get("cover_url") or f"{BASE_URL}/cover.jpg"  # older manifest entries lack this
         items_xml += f"""
     <item>
       <title>{escape(ep['title'])}</title>
@@ -247,6 +321,7 @@ def build_feed_xml(manifest):
       <pubDate>{format_datetime(pub_dt)}</pubDate>
       <enclosure url="{escape(ep['url'])}" length="{ep['bytes']}" type="audio/mpeg"/>
       <guid isPermaLink="false">news-coroke-net-podcast-{escape(ep['date'])}</guid>
+      <itunes:image href="{escape(cover_url)}"/>
       <itunes:duration>{ep['duration_hms']}</itunes:duration>
       <itunes:explicit>false</itunes:explicit>
     </item>"""
@@ -333,12 +408,15 @@ def main():
     file_bytes = mp3_path.stat().st_size
     print(f"  {mp3_path.name}: {file_bytes / 1024:.0f} KB, {duration_hms}")
 
-    # Publish the cover image alongside the episodes (served from output/).
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    if COVER_SRC.exists():
-        cover_tmp = COVER_OUT.with_suffix(".jpg.tmp")
-        cover_tmp.write_bytes(COVER_SRC.read_bytes())
-        os.replace(cover_tmp, COVER_OUT)
+    # Dated cover art for this episode, plus a copy at cover.jpg as the
+    # show-level artwork (so the "show" cover always reflects today).
+    print("Drawing cover...", end=" ", flush=True)
+    cover_path = COVERS_DIR / f"{date_str}.jpg"
+    generate_cover(today, cover_path)
+    cover_tmp = COVER_OUT.with_suffix(".jpg.tmp")
+    cover_tmp.write_bytes(cover_path.read_bytes())
+    os.replace(cover_tmp, COVER_OUT)
+    print("OK")
 
     weekday = WEEKDAY_KO[today.weekday()]
     episode = {
@@ -347,6 +425,7 @@ def main():
         "description": PODCAST_DESCRIPTION,
         "filename": mp3_path.name,
         "url": f"{BASE_URL}/episodes/{mp3_path.name}",
+        "cover_url": f"{BASE_URL}/covers/{cover_path.name}",
         "bytes": file_bytes,
         "duration_seconds": duration_seconds,
         "duration_hms": duration_hms,
