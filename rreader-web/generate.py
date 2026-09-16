@@ -437,6 +437,81 @@ def _gemini_json(prompt, api_key):
 
 ACCENT = "#ec8c6f"
 PODCAST_FEED_URL = "https://news.coroke.net/podcast/feed.xml"
+# Dark-mode rules (header keeps its accent background). Emitted twice by
+# dark_mode_css(): under prefers-color-scheme for visitors who haven't picked
+# a theme, and under [data-theme="dark"] for those who chose dark explicitly.
+DARK_RULES = [
+    '.logo { color: #000; }',
+    '.tab-nav a { color: rgba(0,0,0,0.6); }',
+    '.tab-nav a:hover { color: #000; background: rgba(0,0,0,0.1); }',
+    '.tab-nav a.active { color: #000; border-bottom-color: #000; }',
+    '.podcast-btn { color: #000; background: rgba(0,0,0,0.08); border-color: rgba(0,0,0,0.55); }',
+    '.podcast-btn:hover { background: rgba(0,0,0,0.16); }',
+    '.header-credit, .header-credit a { color: rgba(0,0,0,0.6); }',
+    '.header-credit a:hover { color: #000; }',
+    '.mobile-podcast a { color: #000; }',
+    '.view-pill { border-color: #000; }',
+    '.view-pill::before { background: #000; }',
+    '.view-pill button { color: rgba(0,0,0,0.75); }',
+    '.view-pill button.active { color: {accent}; }',
+    'body { background: #141518; color: #ddd; }',
+    '.mobile-credit { background: #141518; color: #777; }',
+    '.mobile-credit a { color: #777; }',
+    '.mobile-credit a:hover { color: #aaa; }',
+    '.brief { background: #1d1e22; border-color: #2c2d32; }',
+    '.brief-list li { color: #e4e4e4; }',
+    '.brief-list li + li { border-top-color: #28292e; }',
+    '.brief-source { color: #777; }',
+    '.group-card { background: #1d1e22; border-color: #2c2d32; }',
+    '.group-card:hover { box-shadow: 0 3px 14px rgba(0,0,0,0.45); border-color: #3a3b41; }',
+    '.group-source, .group-top-title { color: #e8e8e8; }',
+    '.group-date, .group-sub-date { color: #6f7076; }',
+    '.group-top:hover { background: #2a2522; }',
+    '.group-sub { color: #b4b5ba; border-top-color: #28292e; }',
+    '.group-sub:hover { background: #2a2522; color: #f0f0f0; }',
+    '.list-row { border-bottom-color: #26272c; }',
+    '.list-row:hover { background: #1f2024; }',
+    '.list-num { color: #55565c; }',
+    '.list-date { color: #6f7076; }',
+    '.list-title { color: #e4e4e4; }',
+    'footer { color: #777; }',
+    'footer a { color: #999; }',
+    '.theme-btn { color: #000; background: rgba(0,0,0,0.08); border-color: rgba(0,0,0,0.55); }',
+    '.theme-btn:hover { background: rgba(0,0,0,0.16); }',
+    '.theme-btn .icon-sun { display: inline; }',
+    '.theme-btn .icon-moon { display: none; }',
+]
+
+
+def dark_mode_css():
+    def scoped(prefix):
+        out = []
+        for rule in DARK_RULES:
+            selectors, decl = rule.split(" {", 1)
+            scoped_sel = ", ".join(f"{prefix} {sel.strip()}" for sel in selectors.split(","))
+            out.append(f"      {scoped_sel} {{{decl}".replace("{accent}", ACCENT))
+        return "\n".join(out)
+
+    return (
+        "/* ── Dark mode: system setting unless the visitor picked a theme ── */\n"
+        "    @media (prefers-color-scheme: dark) {\n"
+        + scoped(':root:not([data-theme="light"])')
+        + "\n    }\n"
+        + scoped(':root[data-theme="dark"]').replace("      ", "    ")
+    )
+
+THEME_SUN_SVG = (
+    '<svg class="icon-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/>'
+    '<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2'
+    'M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>'
+)
+THEME_MOON_SVG = (
+    '<svg class="icon-moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+)
+
 PODCAST_ICON_SVG = (
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
     'stroke-width="2" stroke-linecap="round" style="vertical-align:-2px">'
@@ -461,6 +536,7 @@ def esc(s):
 
 def generate_html(all_data, generated_at, briefs=None):
     """Generate a single index.html with both card and list views, toggled in-page."""
+    dark_css = dark_mode_css()
     briefs = briefs or {}
 
     # Build one headline-brief box per category (shown above whichever view is active)
@@ -596,6 +672,7 @@ def generate_html(all_data, generated_at, briefs=None):
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon-192.png">
   <meta name="theme-color" content="{ACCENT}">
+  <script>try {{ var t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); }} catch (e) {{}}</script>
   <meta property="og:title" content="news.coroke.net" />
   <meta property="og:site_name" content="news.coroke.net" />
   <meta property="og:description" content="전세계 IT, AI, 기술, 국제뉴스를 한국어로" />
@@ -683,6 +760,24 @@ def generate_html(all_data, generated_at, briefs=None):
       transition: background 0.15s;
     }}
     .podcast-btn:hover {{ background: rgba(255,255,255,0.32); }}
+
+    .theme-btn {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      flex-shrink: 0;
+      color: #fff;
+      background: rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.55);
+      border-radius: 50%;
+      cursor: pointer;
+      transition: background 0.15s;
+    }}
+    .theme-btn:hover {{ background: rgba(255,255,255,0.32); }}
+    .theme-btn .icon-sun {{ display: none; }}
 
     .header-credit {{
       font-size: 12px;
@@ -1020,44 +1115,7 @@ def generate_html(all_data, generated_at, briefs=None):
       color: #666;
     }}
 
-    /* ── Dark mode (follows OS/browser setting; header keeps its accent background) ── */
-    @media (prefers-color-scheme: dark) {{
-      .logo {{ color: #000; }}
-      .tab-nav a {{ color: rgba(0,0,0,0.6); }}
-      .tab-nav a:hover {{ color: #000; background: rgba(0,0,0,0.1); }}
-      .tab-nav a.active {{ color: #000; border-bottom-color: #000; }}
-      .podcast-btn {{ color: #000; background: rgba(0,0,0,0.08); border-color: rgba(0,0,0,0.55); }}
-      .podcast-btn:hover {{ background: rgba(0,0,0,0.16); }}
-      .header-credit, .header-credit a {{ color: rgba(0,0,0,0.6); }}
-      .header-credit a:hover {{ color: #000; }}
-      .mobile-podcast a {{ color: #000; }}
-      .view-pill {{ border-color: #000; }}
-      .view-pill::before {{ background: #000; }}
-      .view-pill button {{ color: rgba(0,0,0,0.75); }}
-      .view-pill button.active {{ color: {ACCENT}; }}
-      body {{ background: #141518; color: #ddd; }}
-      .mobile-credit {{ background: #141518; color: #777; }}
-      .mobile-credit a {{ color: #777; }}
-      .mobile-credit a:hover {{ color: #aaa; }}
-      .brief {{ background: #1d1e22; border-color: #2c2d32; }}
-      .brief-list li {{ color: #e4e4e4; }}
-      .brief-list li + li {{ border-top-color: #28292e; }}
-      .brief-source {{ color: #777; }}
-      .group-card {{ background: #1d1e22; border-color: #2c2d32; }}
-      .group-card:hover {{ box-shadow: 0 3px 14px rgba(0,0,0,0.45); border-color: #3a3b41; }}
-      .group-source, .group-top-title {{ color: #e8e8e8; }}
-      .group-date, .group-sub-date {{ color: #6f7076; }}
-      .group-top:hover {{ background: #2a2522; }}
-      .group-sub {{ color: #b4b5ba; border-top-color: #28292e; }}
-      .group-sub:hover {{ background: #2a2522; color: #f0f0f0; }}
-      .list-row {{ border-bottom-color: #26272c; }}
-      .list-row:hover {{ background: #1f2024; }}
-      .list-num {{ color: #55565c; }}
-      .list-date {{ color: #6f7076; }}
-      .list-title {{ color: #e4e4e4; }}
-      footer {{ color: #777; }}
-      footer a {{ color: #999; }}
-    }}
+    {dark_css}
   </style>
 </head>
 <body>
@@ -1067,12 +1125,23 @@ def generate_html(all_data, generated_at, briefs=None):
       <nav class="tab-nav">{tabs_html}</nav>
       <a class="podcast-btn" id="podcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener" title="RSS 링크가 복사됩니다. 팟캐스트 앱에서 URL로 추가해보세요.">{PODCAST_ICON_SVG} 팟캐스트</a>
       <span class="header-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></span>
+      <button class="theme-btn" id="themeBtn" type="button" title="다크/라이트 모드 전환" aria-label="다크/라이트 모드 전환">{THEME_SUN_SVG}{THEME_MOON_SVG}</button>
       <div class="view-pill">
         <button data-view="card" class="active">카드</button>
         <button data-view="list">목록</button>
       </div>
     </div>
   </header>
+  <script>
+  document.getElementById('themeBtn').addEventListener('click', function() {{
+    var root = document.documentElement;
+    var current = root.getAttribute('data-theme')
+      || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    var next = current === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try {{ localStorage.setItem('theme', next); }} catch (e) {{}}
+  }});
+  </script>
   <div class="mobile-podcast"><a id="mobilePodcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">{PODCAST_ICON_SVG} 팟캐스트 구독하기<span class="podcast-copy-note" style="display:none"> (링크 복사됨)</span></a></div>
   <div class="mobile-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></div>
   <main>{briefs_html}{sections}
