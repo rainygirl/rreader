@@ -15,6 +15,7 @@ use indexmap::IndexMap;
 use rss::Channel;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -505,6 +506,11 @@ struct App {
     translation_cache: Arc<Mutex<HashMap<String, String>>>,
     needs_redraw: Arc<Mutex<bool>>,
     pending_translations: Arc<Mutex<HashMap<String, HashMap<String, String>>>>,
+    // Async feed fetching: category -> freshly fetched entries, applied by
+    // the main loop; fetching_categories guards against launching a second
+    // fetch for a category that's already loading in the background.
+    pending_entries: Arc<Mutex<HashMap<String, Vec<FeedEntry>>>>,
+    fetching_categories: Arc<Mutex<HashSet<String>>>,
     // Summary modal
     show_modal: bool,
     modal_text: Vec<String>,
@@ -584,6 +590,8 @@ impl App {
             translation_cache: Arc::new(Mutex::new(cache)),
             needs_redraw: Arc::new(Mutex::new(false)),
             pending_translations: Arc::new(Mutex::new(HashMap::new())),
+            pending_entries: Arc::new(Mutex::new(HashMap::new())),
+            fetching_categories: Arc::new(Mutex::new(HashSet::new())),
             show_modal: false,
             modal_text: Vec::new(),
             modal_raw_text: String::new(),
@@ -621,68 +629,130 @@ impl App {
         None
     }
 
-    fn save_cached_feed(&self, category: &str, feed: &CachedFeed) -> Result<()> {
-        let cache_path = self.data_path.join(format!("rss_{}.json", category));
-        let content = serde_json::to_string_pretty(feed)?;
-        fs::write(&cache_path, content)?;
-        Ok(())
-    }
-
-    fn fetch_feeds(&mut self, category: &str) -> Result<Vec<FeedEntry>> {
-        let config = self
-            .feeds_config
-            .get(category)
-            .context("Category not found")?;
-        let mut all_entries: HashMap<i64, FeedEntry> = HashMap::new();
-
-        let feeds: Vec<(String, String)> = config
-            .feeds
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+    /// Fetch every feed in a category CONCURRENTLY (one thread per feed,
+    /// joined via thread::scope) instead of one at a time. A category like
+    /// "tech" has 36 feeds; at ~1-2s per request that was 36-70+ seconds of
+    /// sequential, *main-thread-blocking* network I/O for a single Tab
+    /// press. This is a free function (no &self) so it can run entirely on
+    /// a background thread -- see spawn_category_fetch.
+    fn fetch_feeds_parallel(
+        feeds: &[(String, String)],
+        show_author: bool,
+        loading_state: &Arc<Mutex<LoadingState>>,
+    ) -> Vec<FeedEntry> {
         let total = feeds.len();
-        let show_author = config.show_author;
-
         {
-            let mut state = self.loading_state.lock().unwrap();
+            let mut state = loading_state.lock().unwrap();
             state.is_loading = true;
             state.current = 0;
             state.total = total;
         }
 
-        for (idx, (source_name, url)) in feeds.iter().enumerate() {
-            {
-                let mut state = self.loading_state.lock().unwrap();
-                state.current = idx + 1;
-            }
+        let all_entries: Mutex<HashMap<i64, FeedEntry>> = Mutex::new(HashMap::new());
+        let completed = Mutex::new(0usize);
 
-            match Self::fetch_single_feed(source_name, url, show_author) {
-                Ok(entries) => {
-                    for entry in entries {
-                        all_entries.insert(entry.id, entry);
+        std::thread::scope(|scope| {
+            for (source_name, url) in feeds {
+                scope.spawn(|| {
+                    if let Ok(entries) = Self::fetch_single_feed(source_name, url, show_author) {
+                        let mut all = all_entries.lock().unwrap();
+                        for entry in entries {
+                            all.insert(entry.id, entry);
+                        }
                     }
-                }
-                Err(_) => {}
+                    let mut c = completed.lock().unwrap();
+                    *c += 1;
+                    loading_state.lock().unwrap().current = *c;
+                });
             }
-        }
+        });
 
         {
-            let mut state = self.loading_state.lock().unwrap();
+            let mut state = loading_state.lock().unwrap();
             state.is_loading = false;
         }
 
-        let mut entries: Vec<FeedEntry> = all_entries.into_values().collect();
+        let mut entries: Vec<FeedEntry> = all_entries.into_inner().unwrap().into_values().collect();
         entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        entries
+    }
 
-        if !entries.is_empty() {
-            let cached = CachedFeed {
-                entries: entries.clone(),
-                created_at: Utc::now().timestamp(),
-            };
-            let _ = self.save_cached_feed(category, &cached);
+    /// Kick off a background fetch for `category` if one isn't already in
+    /// flight. Returns immediately -- the result shows up in
+    /// `pending_entries` once the thread finishes, picked up by the main
+    /// loop (see apply_pending_entries), so this never blocks a keypress.
+    fn spawn_category_fetch(&self, category: &str) {
+        {
+            let mut fetching = self.fetching_categories.lock().unwrap();
+            if fetching.contains(category) {
+                return;
+            }
+            fetching.insert(category.to_string());
         }
 
-        Ok(entries)
+        let config = match self.feeds_config.get(category) {
+            Some(c) => c,
+            None => {
+                self.fetching_categories.lock().unwrap().remove(category);
+                return;
+            }
+        };
+        let feeds: Vec<(String, String)> = config
+            .feeds
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let show_author = config.show_author;
+
+        let category = category.to_string();
+        let data_path = self.data_path.clone();
+        let loading_state = Arc::clone(&self.loading_state);
+        let pending_entries = Arc::clone(&self.pending_entries);
+        let fetching_categories = Arc::clone(&self.fetching_categories);
+        let needs_redraw = Arc::clone(&self.needs_redraw);
+
+        std::thread::spawn(move || {
+            let entries = Self::fetch_feeds_parallel(&feeds, show_author, &loading_state);
+
+            if !entries.is_empty() {
+                let cached = CachedFeed {
+                    entries: entries.clone(),
+                    created_at: Utc::now().timestamp(),
+                };
+                if let Ok(content) = serde_json::to_string_pretty(&cached) {
+                    let cache_path = data_path.join(format!("rss_{}.json", category));
+                    let _ = fs::write(&cache_path, content);
+                }
+            }
+
+            pending_entries.lock().unwrap().insert(category.clone(), entries);
+            fetching_categories.lock().unwrap().remove(&category);
+            *needs_redraw.lock().unwrap() = true;
+        });
+    }
+
+    /// Apply any feed fetches that finished in the background. Only
+    /// triggers translation for the category that's actually on screen
+    /// right now -- if the user has already tabbed away, its disk cache is
+    /// fresh, so load_or_refresh will pick it up (and translate it) the
+    /// next time they switch back to it.
+    fn apply_pending_entries(&mut self) {
+        let pending: HashMap<String, Vec<FeedEntry>> = {
+            let mut pending = self.pending_entries.lock().unwrap();
+            std::mem::take(&mut *pending)
+        };
+        if pending.is_empty() {
+            return;
+        }
+        let current = self.current_category_name().to_string();
+        for (category, entries) in pending {
+            let is_current = category == current;
+            self.entries.insert(category, entries);
+            if is_current {
+                self.last_refresh = Instant::now();
+                self.trigger_translation();
+            }
+        }
     }
 
     fn fetch_single_feed(
@@ -829,25 +899,25 @@ impl App {
         Ok(entries)
     }
 
+    /// Never blocks: just makes sure a background fetch for the current
+    /// category is running (spawn_category_fetch no-ops if one already is).
     fn refresh_current_category(&mut self) {
         let category = self.current_category_name().to_string();
-        match self.fetch_feeds(&category) {
-            Ok(entries) => {
-                self.entries.insert(category, entries);
-                self.last_refresh = Instant::now();
-            }
-            Err(_) => {}
-        }
-        self.trigger_translation();
+        self.spawn_category_fetch(&category);
     }
 
     fn load_or_refresh(&mut self) {
         let category = self.current_category_name().to_string();
         if let Some(cached) = self.load_cached_feed(&category) {
             let age = Utc::now().timestamp() - cached.created_at;
-            if age < REFRESH_INTERVAL as i64 && !cached.entries.is_empty() {
-                self.entries.insert(category, cached.entries);
+            let fresh = age < REFRESH_INTERVAL as i64 && !cached.entries.is_empty();
+            // Show what we have immediately (even if stale) so Tab never
+            // presents a blank screen while a background fetch is running.
+            if !cached.entries.is_empty() {
+                self.entries.insert(category.clone(), cached.entries);
                 self.trigger_translation();
+            }
+            if fresh {
                 return;
             }
         }
@@ -1852,13 +1922,14 @@ fn main() -> Result<()> {
         // Marquee tick
         app.tick_marquee();
 
-        // Check for pending translations
+        // Check for pending translations / background feed fetches
         {
             let mut needs = app.needs_redraw.lock().unwrap();
             if *needs {
                 *needs = false;
                 drop(needs);
                 app.apply_pending_translations();
+                app.apply_pending_entries();
             }
         }
 
