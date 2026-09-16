@@ -481,6 +481,12 @@ struct App {
     feeds_config: FeedsConfig,
     current_category: usize,
     entries: HashMap<String, Vec<FeedEntry>>,
+    // Newly (re)fetched entries that aren't fully cache-translated yet.
+    // Kept OUT of `entries` until translation resolves, so the visible list
+    // for a category never flips to raw English then back to Korean -- it
+    // either updates straight to Korean, or (first ever visit) stays empty
+    // with the loading/translating indicator until then.
+    staged_entries: HashMap<String, Vec<FeedEntry>>,
     selected: Option<usize>,
     data_path: PathBuf,
     last_refresh: Instant,
@@ -571,6 +577,7 @@ impl App {
             feeds_config,
             current_category: 0,
             entries: HashMap::new(),
+            staged_entries: HashMap::new(),
             selected: None,
             data_path,
             last_refresh: Instant::now() - Duration::from_secs(REFRESH_INTERVAL + 1),
@@ -747,11 +754,10 @@ impl App {
         let current = self.current_category_name().to_string();
         for (category, entries) in pending {
             let is_current = category == current;
-            self.entries.insert(category, entries);
             if is_current {
                 self.last_refresh = Instant::now();
-                self.trigger_translation();
             }
+            self.commit_or_stage_entries(category, entries);
         }
     }
 
@@ -929,14 +935,20 @@ impl App {
             return;
         }
 
+        // Already staged (translation in flight for this category) --
+        // don't kick off a second one, just let it resolve.
+        if self.staged_entries.contains_key(&category) {
+            return;
+        }
+
         if let Some(cached) = self.load_cached_feed(&category) {
             let age = Utc::now().timestamp() - cached.created_at;
             let fresh = age < REFRESH_INTERVAL as i64 && !cached.entries.is_empty();
-            // Show what we have immediately (even if stale) so Tab never
-            // presents a blank screen while a background fetch is running.
+            // Translate before showing (see commit_or_stage_entries) so a
+            // first visit either goes straight to Korean or stays empty
+            // with the loading indicator -- never a flash of raw text.
             if !cached.entries.is_empty() {
-                self.entries.insert(category.clone(), cached.entries);
-                self.trigger_translation();
+                self.commit_or_stage_entries(category.clone(), cached.entries);
             }
             if fresh {
                 return;
@@ -1153,7 +1165,43 @@ impl App {
         }
     }
 
-    fn trigger_translation(&self) {
+    /// Insert freshly (re)fetched entries for `category`, translating first
+    /// if needed instead of showing raw text and flipping to Korean a
+    /// moment later. Fully cache-covered -> translated and committed to
+    /// `self.entries` in one step, right now. Not fully covered (or no
+    /// Gemini key) -> staged in `staged_entries`; whatever was already in
+    /// `self.entries` for this category (if anything) keeps showing until
+    /// apply_pending_translations commits the staged version.
+    fn commit_or_stage_entries(&mut self, category: String, mut entries: Vec<FeedEntry>) {
+        if self.gemini_api_key.is_none() {
+            self.entries.insert(category, entries);
+            return;
+        }
+
+        let titles: Vec<String> = entries.iter().map(|e| e.title.clone()).collect();
+        let all_cached = {
+            let cache = self.translation_cache.lock().unwrap();
+            !titles.is_empty() && titles.iter().all(|t| cache.contains_key(t))
+        };
+
+        if all_cached {
+            let cache = self.translation_cache.lock().unwrap();
+            for e in entries.iter_mut() {
+                if let Some(tr) = cache.get(&e.title) {
+                    e.title_original = Some(e.title.clone());
+                    e.title = tr.clone();
+                }
+            }
+            drop(cache);
+            self.entries.insert(category, entries);
+            return;
+        }
+
+        self.staged_entries.insert(category.clone(), entries);
+        self.spawn_translation(category, titles);
+    }
+
+    fn spawn_translation(&self, category: String, titles: Vec<String>) {
         let api_key = match &self.gemini_api_key {
             Some(k) => k.clone(),
             None => return,
@@ -1166,18 +1214,6 @@ impl App {
                 return;
             }
         }
-
-        let category = self.current_category_name().to_string();
-        let titles: Vec<String> = self
-            .current_entries()
-            .iter()
-            .map(|e| {
-                e.title_original
-                    .as_ref()
-                    .unwrap_or(&e.title)
-                    .clone()
-            })
-            .collect();
 
         if titles.is_empty() {
             return;
@@ -1249,21 +1285,34 @@ impl App {
             std::mem::take(&mut *pending)
         };
 
-        for (category, translations) in pending {
-            if let Some(entries) = self.entries.get_mut(&category) {
-                for entry in entries.iter_mut() {
-                    let original = entry
-                        .title_original
-                        .as_ref()
-                        .unwrap_or(&entry.title)
-                        .clone();
-                    if let Some(translated) = translations.get(&original) {
-                        if entry.title_original.is_none() {
-                            entry.title_original = Some(entry.title.clone());
-                        }
-                        entry.title = translated.clone();
+        fn apply_to(entries: &mut [FeedEntry], translations: &HashMap<String, String>) {
+            for entry in entries.iter_mut() {
+                let original = entry
+                    .title_original
+                    .as_ref()
+                    .unwrap_or(&entry.title)
+                    .clone();
+                if let Some(translated) = translations.get(&original) {
+                    if entry.title_original.is_none() {
+                        entry.title_original = Some(entry.title.clone());
                     }
+                    entry.title = translated.clone();
                 }
+            }
+        }
+
+        for (category, translations) in pending {
+            // Staged (not shown yet) -- apply whatever came back (even
+            // partial/empty on a translation failure, so the category isn't
+            // stuck empty forever) and commit it now, for the first time.
+            if let Some(mut entries) = self.staged_entries.remove(&category) {
+                apply_to(&mut entries, &translations);
+                self.entries.insert(category, entries);
+                continue;
+            }
+            // Already committed earlier -- update in place.
+            if let Some(entries) = self.entries.get_mut(&category) {
+                apply_to(entries, &translations);
             }
         }
     }
