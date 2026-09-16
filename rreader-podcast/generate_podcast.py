@@ -45,11 +45,10 @@ BASE_URL = "https://news.coroke.net/podcast"
 
 # Order requested: Tech(기술) -> Top News(국제) -> Economy(경제)
 CATEGORY_ORDER = ["tech", "news", "economy"]
-CATEGORY_LABELS = {"tech": "기술", "news": "국제", "economy": "경제"}
 
-# ko-KR-InJoonNeural: deep male voice, reads well as a formal news announcer.
-# Other free options: ko-KR-HyunsuMultilingualNeural (male), ko-KR-SunHiNeural (female).
-VOICE = "ko-KR-InJoonNeural"
+# ko-KR-SunHiNeural: female voice, reads well as a formal news announcer.
+# Other free options: ko-KR-InJoonNeural (male), ko-KR-HyunsuMultilingualNeural (male).
+VOICE = "ko-KR-SunHiNeural"
 RATE = "+0%"  # e.g. "+10%" to speak faster
 
 PODCAST_TITLE = "news.coroke.net 뉴스 브리핑"
@@ -57,7 +56,8 @@ PODCAST_AUTHOR = "news.coroke.net"
 PODCAST_OWNER_EMAIL = "rainygirl@gmail.com"
 PODCAST_DESCRIPTION = "기술, 국제, 경제 세 분야의 핵심 뉴스를 매일 한국어로 요약해 전해드리는 짧은 뉴스 브리핑입니다."
 PODCAST_LANGUAGE = "ko-kr"
-MAX_FEED_ITEMS = 60  # keep the feed from growing unbounded
+MAX_FEED_ITEMS = 60  # extra safety cap on top of RETENTION_DAYS
+RETENTION_DAYS = 14  # delete episodes (mp3 + feed entry) older than this
 
 WEEKDAY_KO = ["월", "화", "수", "목", "금", "토", "일"]
 
@@ -66,40 +66,31 @@ WEEKDAY_KO = ["월", "화", "수", "목", "금", "토", "일"]
 
 
 def build_script(briefs, today):
-    """Build the announcer script text from today's cached briefs."""
-    weekday = WEEKDAY_KO[today.weekday()]
-    lines = [
-        f"안녕하세요, {PODCAST_TITLE}입니다.",
-        f"오늘은 {today.year}년 {today.month}월 {today.day}일 {weekday}요일입니다. "
-        "기술, 국제, 경제, 세 분야의 핵심 뉴스를 전해드리겠습니다.",
-    ]
+    """
+    Build the script text from today's cached briefs.
 
-    ordinals = ["첫 번째", "두 번째", "세 번째", "네 번째", "다섯 번째"]
-    transitions = {
-        "tech": "먼저, 기술 분야 소식입니다.",
-        "news": "다음은, 국제 뉴스입니다.",
-        "economy": "마지막으로, 경제 소식입니다.",
-    }
+    No filler: no "먼저 기술 분야 소식입니다" category transitions, no "첫 번째/두
+    번째" ordinal markers. Just a short greeting, then every headline sentence
+    read back to back in CATEGORY_ORDER (Tech -> Top News -> Economy), then a
+    short sign-off.
+    """
+    weekday = WEEKDAY_KO[today.weekday()]
+    lines = [f"안녕하세요, {PODCAST_TITLE}입니다. 오늘은 {today.year}년 {today.month}월 {today.day}일 {weekday}요일입니다."]
+
     has_any = False
     for cat_key in CATEGORY_ORDER:
         items = (briefs.get(cat_key) or {}).get("items") or []
-        if not items:
-            continue
-        has_any = True
-        lines.append(transitions.get(cat_key, f"{CATEGORY_LABELS.get(cat_key, cat_key)} 소식입니다."))
-        for i, item in enumerate(items):
-            ordinal = ordinals[i] if i < len(ordinals) else f"{i + 1}번째"
+        for item in items:
             summary = item.get("summary", "").strip()
             if not summary:
                 continue
-            lines.append(f"{ordinal} 소식입니다. {summary}")
+            has_any = True
+            lines.append(summary)
 
     if not has_any:
         return None
 
-    lines.append(
-        "여기까지 오늘의 뉴스 브리핑이었습니다. 더 자세한 기사는 뉴스 코로케 넷, news.coroke.net 에서 확인하실 수 있습니다. 들어주셔서 감사합니다."
-    )
+    lines.append("여기까지 오늘의 뉴스 브리핑이었습니다. 더 자세한 기사는 뉴스 코로케 넷, news.coroke.net 에서 확인하실 수 있습니다. 들어주셔서 감사합니다.")
     return "\n".join(lines)
 
 
@@ -125,6 +116,28 @@ def save_manifest(manifest):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+
+def prune_old_episodes(manifest, today):
+    """Delete mp3 files (and their manifest/feed entries) older than RETENTION_DAYS."""
+    cutoff = today - datetime.timedelta(days=RETENTION_DAYS)
+    kept, dropped = [], []
+    for ep in manifest:
+        ep_date = datetime.date.fromisoformat(ep["date"])
+        if ep_date < cutoff:
+            dropped.append(ep)
+        else:
+            kept.append(ep)
+    for ep in dropped:
+        mp3_path = EPISODES_DIR / ep["filename"]
+        try:
+            mp3_path.unlink(missing_ok=True)
+        except OSError as e:
+            print(f"  [warn] could not delete {mp3_path}: {e}")
+    if dropped:
+        print(f"Pruned {len(dropped)} episode(s) older than {RETENTION_DAYS} days: "
+              + ", ".join(ep["date"] for ep in dropped))
+    return kept
 
 
 def build_feed_xml(manifest):
@@ -239,6 +252,7 @@ def main():
     manifest = [ep for ep in manifest if ep["date"] != date_str]
     manifest.insert(0, episode)
     manifest.sort(key=lambda e: e["date"], reverse=True)
+    manifest = prune_old_episodes(manifest, today)
     save_manifest(manifest)
 
     FEED_FILE.write_text(build_feed_xml(manifest), encoding="utf-8")
