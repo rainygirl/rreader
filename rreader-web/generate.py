@@ -275,17 +275,28 @@ def translate_entries(entries, api_key, url_cache):
 
 
 def _translate_batch(titles, api_key):
-    """Call Gemini to translate a list of titles. Returns {original: translated}."""
+    """
+    Call Gemini to translate a list of titles. Returns {original: translated}.
+
+    Matched back to the caller's own `titles` strings by index, NOT by echoing the
+    title back as a JSON key -- some sources (e.g. Le Monde) use French typographic
+    non-breaking spaces (U+00A0) around colons/guillemets, and Gemini "normalizes"
+    those to plain spaces when it echoes the title back as a key, so a naive
+    key == original-title match silently fails even though the translation itself
+    is correct. Index-based matching sidesteps that entirely (same approach as
+    build_brief's candidate/idx pairing).
+    """
     try:
         from google.genai import Client
 
         client = Client(api_key=api_key)
-        payload = json.dumps({"titles": titles}, ensure_ascii=False)
+        indexed = [{"idx": i, "title": t} for i, t in enumerate(titles)]
         prompt = (
-            "Translate the 'titles' in the following JSON to Korean. "
-            "Each title may be in English, Japanese, or other languages — translate all of them to Korean. "
-            "Return a JSON object where each original title is a key and its Korean translation is the value. "
-            "Respond with ONLY the JSON object, no markdown.\n\n" + payload
+            "Translate the 'title' in each object of the following JSON array to Korean. "
+            "Each title may be in English, French, Japanese, or other languages — translate all of them to Korean. "
+            'Return a JSON array of the same length, each item as {"idx": <idx from input>, "ko": "<Korean translation>"}. '
+            "Keep idx exactly as given; do not skip, merge, split, or reorder entries. "
+            "Respond with ONLY the JSON array, no markdown.\n\n" + json.dumps(indexed, ensure_ascii=False)
         )
         response = client.models.generate_content(
             model="models/gemini-3.1-flash-lite",
@@ -295,7 +306,17 @@ def _translate_batch(titles, api_key):
         # Strip markdown code fences if present
         if cleaned.startswith("```"):
             cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        return json.loads(cleaned)
+        arr = json.loads(cleaned)
+        result = {}
+        for item in arr:
+            try:
+                idx = int(item.get("idx"))
+                ko = str(item.get("ko", "")).strip()
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if 0 <= idx < len(titles) and ko:
+                result[titles[idx]] = ko
+        return result
     except Exception as e:
         print(f"\n  [warn] Translation error: {e}", file=sys.stderr)
         return {}
