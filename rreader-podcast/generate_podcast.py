@@ -25,6 +25,7 @@ and submit the feed to Apple Podcasts and Spotify.
 import asyncio
 import datetime
 import json
+import os
 import sys
 from email.utils import format_datetime
 from pathlib import Path
@@ -56,23 +57,24 @@ CATEGORY_ORDER = ["tech", "news", "economy"]
 # ko-KR-SunHiNeural: female voice, reads well as a formal news announcer.
 # Other free options: ko-KR-InJoonNeural (male), ko-KR-HyunsuMultilingualNeural (male).
 VOICE = "ko-KR-SunHiNeural"
-RATE = "+20%"  # 1.2x speaking rate (edge-tts's own prosody control, not a post-speedup)
+RATE = "+10%"  # 1.1x speaking rate (edge-tts's own prosody control, not a post-speedup)
 
 # Background music: a short original synth-beat loop (see make_music.py, no
 # licensing to worry about since we generated it ourselves) tiled under the
 # narration, BBC-Newsbeat-style -- upbeat under a couple of seconds of
 # lead-in/tail, ducked quieter while the narration is actually playing.
 MUSIC_FILE = BASE_DIR / "assets" / "background.wav"
-MUSIC_LEAD_IN_SEC = 2.0
-MUSIC_TAIL_SEC = 3.0
-MUSIC_BASE_DB = -9  # music's own level (music-only sections)
-MUSIC_DUCK_DB = -16  # additional attenuation under the narration
+MUSIC_LEAD_IN_SEC = 3.0
+MUSIC_TAIL_SEC = 3.5
+MUSIC_BASE_DB = -6  # music's own level (music-only sections)
+MUSIC_DUCK_DB = -9  # additional attenuation under the narration (was -16: too quiet to hear at all)
 MUSIC_DUCK_RAMP_SEC = 0.4
 
 PODCAST_TITLE = "news.coroke.net 뉴스 브리핑"
 PODCAST_AUTHOR = "news.coroke.net"
 PODCAST_OWNER_EMAIL = "rainygirl@gmail.com"
 PODCAST_DESCRIPTION = "기술, 국제, 경제 세 분야의 핵심 뉴스를 매일 한국어로 요약해 전해드리는 짧은 뉴스 브리핑입니다."
+CLOSING_LINE = "이상, 뉴스코로케 제공입니다."
 PODCAST_LANGUAGE = "ko-kr"
 MAX_FEED_ITEMS = 60  # extra safety cap on top of RETENTION_DAYS
 RETENTION_DAYS = 14  # delete episodes (mp3 + feed entry) older than this
@@ -87,11 +89,10 @@ def build_script(briefs, today):
     """
     Build the script text from today's cached briefs.
 
-    No filler at all: no opening greeting/date announcement, no "먼저 기술
-    분야 소식입니다" category transitions, no "첫 번째/두 번째" ordinal
-    markers, no closing sign-off. Just every headline sentence read back to
-    back in CATEGORY_ORDER (Tech -> Top News -> Economy). The background
-    music (see mix_with_music()) carries the "show" framing instead.
+    No filler: no opening greeting/date announcement, no "먼저 기술 분야
+    소식입니다" category transitions, no "첫 번째/두 번째" ordinal markers.
+    Just every headline sentence read back to back in CATEGORY_ORDER
+    (Tech -> Top News -> Economy), then one short sign-off line.
     """
     lines = []
     for cat_key in CATEGORY_ORDER:
@@ -101,7 +102,11 @@ def build_script(briefs, today):
             if summary:
                 lines.append(summary)
 
-    return "\n".join(lines) if lines else None
+    if not lines:
+        return None
+
+    lines.append(CLOSING_LINE)
+    return "\n".join(lines)
 
 
 # ─── TTS ──────────────────────────────────────────────────────────────────────
@@ -174,7 +179,14 @@ def mix_with_music(voice_path, out_path):
 
     pcm = np.clip(mixed * 32767, -32768, 32767).astype(np.int16)
     out_audio = AudioSegment(pcm.tobytes(), frame_rate=sr, sample_width=2, channels=2)
-    out_audio.export(str(out_path), format="mp3", bitrate="96k")
+    # Export to a temp file then atomically rename into place: nginx's
+    # open_file_cache can otherwise serve a half-written or previous-length
+    # response if a listener requests the episode while it's being
+    # overwritten in place (same class of bug as rreader-web's index.html).
+    out_path = Path(out_path)
+    tmp_path = out_path.with_suffix(".mp3.tmp")
+    out_audio.export(str(tmp_path), format="mp3", bitrate="96k")
+    os.replace(tmp_path, out_path)
 
 
 # ─── RSS feed ─────────────────────────────────────────────────────────────────
@@ -187,10 +199,19 @@ def load_manifest():
     return []
 
 
+def atomic_write_text(path, text):
+    """Write then os.replace, so a concurrent nginx request never sees a
+    half-written or stale-length file (nginx's open_file_cache in particular
+    can otherwise keep serving an old Content-Length for a moment)."""
+    path = Path(path)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
 def save_manifest(manifest):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, ensure_ascii=False, indent=2)
+    atomic_write_text(MANIFEST_FILE, json.dumps(manifest, ensure_ascii=False, indent=2))
 
 
 def prune_old_episodes(manifest, today):
@@ -315,7 +336,9 @@ def main():
     # Publish the cover image alongside the episodes (served from output/).
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if COVER_SRC.exists():
-        COVER_OUT.write_bytes(COVER_SRC.read_bytes())
+        cover_tmp = COVER_OUT.with_suffix(".jpg.tmp")
+        cover_tmp.write_bytes(COVER_SRC.read_bytes())
+        os.replace(cover_tmp, COVER_OUT)
 
     weekday = WEEKDAY_KO[today.weekday()]
     episode = {
@@ -336,7 +359,7 @@ def main():
     manifest = prune_old_episodes(manifest, today)
     save_manifest(manifest)
 
-    FEED_FILE.write_text(build_feed_xml(manifest), encoding="utf-8")
+    atomic_write_text(FEED_FILE, build_feed_xml(manifest))
     print(f"Generated: {FEED_FILE}")
     print(f"Done at {datetime.datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M KST')}")
 
