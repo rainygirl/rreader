@@ -368,6 +368,10 @@ def build_brief(cat_title, entries, api_key, brief_cache, cat_key):
         "newsworthy stories (prefer distinct topics and distinct sources; skip opinion pieces, "
         "product deals, and trivia). For each, write ONE natural Korean sentence (about 50-80 characters) "
         "that summarizes the story so a reader understands what happened without clicking. "
+        "Write in a dry, neutral wire-service tone: state only what happened, who/what/when/where/how "
+        "many, with no emotional or editorializing adjectives or commentary -- no words like 안타까운, "
+        "충격적인, 다행히, 우려스러운, etc, and no added interpretation of how the reader should feel "
+        "about it. "
         f"Return ONLY a JSON array of exactly {BRIEF_COUNT} objects: "
         '[{"idx": <idx from input>, "summary": "<Korean sentence>"}], ordered by importance, no markdown.\n\n'
         + json.dumps(candidates, ensure_ascii=False)
