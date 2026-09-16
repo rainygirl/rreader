@@ -217,10 +217,25 @@ def fetch_og_images(entries, og_cache):
 # ─── Translation ──────────────────────────────────────────────────────────────
 
 
+def _is_korean(s):
+    """True if s contains at least one Hangul syllable (a real Korean translation should)."""
+    return isinstance(s, str) and any("\uAC00" <= c <= "\uD7A3" for c in s)
+
+
 def translate_entries(entries, api_key, url_cache):
     """
     Translate entry titles to Korean.
     url_cache is keyed by article URL (permalink) -> translated title.
+
+    Each title's translation is validated individually (must contain Hangul) before
+    being cached. Gemini sometimes returns a batch where most titles are correctly
+    translated to Korean but a few come back untranslated, in English, or even in
+    Japanese (source-language bleed on Japanese-origin feeds) -- validating only
+    "does *any* value in the whole batch contain Hangul" let those bad results slip
+    through and get cached forever (the URL then looks "already translated" and is
+    never retried). Failing titles are now retried (as a shrinking sub-batch) within
+    this run, and anything still unresolved is simply left out of url_cache so the
+    next run tries again, instead of caching a wrong-language result permanently.
     """
     # Collect URLs that need translation
     need_translation = []
@@ -234,22 +249,21 @@ def translate_entries(entries, api_key, url_cache):
         translations = {}
         chunk_size = 80
         chunks = [titles[i : i + chunk_size] for i in range(0, len(titles), chunk_size)]
-        all_ok = True
+        any_missing = False
         for chunk in chunks:
-            chunk_result = {}
+            pending = chunk
             for attempt in range(3):
-                chunk_result = _translate_batch(chunk, api_key)
-                if chunk_result and any(
-                    "\uAC00" <= c <= "\uD7A3" for v in chunk_result.values() for c in v
-                ):
+                raw = _translate_batch(pending, api_key) or {}
+                good = {k: v for k, v in raw.items() if _is_korean(v)}
+                translations.update(good)
+                pending = [t for t in pending if t not in good]
+                if not pending:
                     break
                 if attempt < 2:
-                    print(f"retry {attempt + 1}...", end=" ", flush=True)
-            if chunk_result:
-                translations.update(chunk_result)
-            else:
-                all_ok = False
-        print("OK" if all_ok else "FAIL")
+                    print(f"retry {attempt + 1} ({len(pending)} left)...", end=" ", flush=True)
+            if pending:
+                any_missing = True
+        print("OK" if not any_missing else "FAIL (some titles left untranslated, will retry next run)")
         for entry in need_translation:
             translated = translations.get(entry["title"])
             if translated:
