@@ -24,6 +24,7 @@ and submit the feed to Apple Podcasts and Spotify.
 
 import asyncio
 import datetime
+import hashlib
 import json
 import os
 import sys
@@ -408,6 +409,14 @@ def main():
     file_bytes = mp3_path.stat().st_size
     print(f"  {mp3_path.name}: {file_bytes / 1024:.0f} KB, {duration_hms}")
 
+    # A content hash as a cache-busting query string on the public URL: the
+    # filename is stable per date, but --force (or a retry) can change its
+    # bytes, and Cloudflare's edge cache doesn't reliably revalidate a
+    # same-URL response just because Cache-Control says to -- an old cached
+    # copy can keep being served for a long time regardless. A URL that
+    # actually changes when the content changes sidesteps that entirely.
+    content_hash = hashlib.sha1(mp3_path.read_bytes()).hexdigest()[:10]
+
     # Dated cover art for this episode, plus a copy at cover.jpg as the
     # show-level artwork (so the "show" cover always reflects today).
     print("Drawing cover...", end=" ", flush=True)
@@ -424,8 +433,8 @@ def main():
         "title": f"{today.year}년 {today.month}월 {today.day}일 ({weekday}) 뉴스 브리핑",
         "description": PODCAST_DESCRIPTION,
         "filename": mp3_path.name,
-        "url": f"{BASE_URL}/episodes/{mp3_path.name}",
-        "cover_url": f"{BASE_URL}/covers/{cover_path.name}",
+        "url": f"{BASE_URL}/episodes/{mp3_path.name}?v={content_hash}",
+        "cover_url": f"{BASE_URL}/covers/{cover_path.name}?v={content_hash}",
         "bytes": file_bytes,
         "duration_seconds": duration_seconds,
         "duration_hms": duration_hms,
