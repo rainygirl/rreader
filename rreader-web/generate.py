@@ -1020,8 +1020,21 @@ def generate_html(all_data, generated_at, briefs=None):
       color: #666;
     }}
 
-    /* ── Dark mode (follows OS/browser setting; header keeps its accent colors) ── */
+    /* ── Dark mode (follows OS/browser setting; header keeps its accent background) ── */
     @media (prefers-color-scheme: dark) {{
+      .logo {{ color: #000; }}
+      .tab-nav a {{ color: rgba(0,0,0,0.6); }}
+      .tab-nav a:hover {{ color: #000; background: rgba(0,0,0,0.1); }}
+      .tab-nav a.active {{ color: #000; border-bottom-color: #000; }}
+      .podcast-btn {{ color: #000; background: rgba(0,0,0,0.08); border-color: rgba(0,0,0,0.55); }}
+      .podcast-btn:hover {{ background: rgba(0,0,0,0.16); }}
+      .header-credit, .header-credit a {{ color: rgba(0,0,0,0.6); }}
+      .header-credit a:hover {{ color: #000; }}
+      .mobile-podcast a {{ color: #000; }}
+      .view-pill {{ border-color: #000; }}
+      .view-pill::before {{ background: #000; }}
+      .view-pill button {{ color: rgba(0,0,0,0.75); }}
+      .view-pill button.active {{ color: {ACCENT}; }}
       body {{ background: #141518; color: #ddd; }}
       .mobile-credit {{ background: #141518; color: #777; }}
       .mobile-credit a {{ color: #777; }}
