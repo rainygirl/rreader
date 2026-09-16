@@ -423,6 +423,15 @@ def _gemini_json(prompt, api_key):
 
 ACCENT = "#ec8c6f"
 PODCAST_FEED_URL = "https://news.coroke.net/podcast/feed.xml"
+PODCAST_ICON_SVG = (
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" style="vertical-align:-2px">'
+    '<circle cx="12" cy="12" r="2.3" fill="currentColor" stroke="none"/>'
+    '<path d="M8.1 12a3.9 3.9 0 0 1 7.8 0"/>'
+    '<path d="M5.3 12a6.7 6.7 0 0 1 13.4 0"/>'
+    '<path d="M12 16.3v4.2"/>'
+    '</svg>'
+)
 
 ADSENSE_UNIT = """<ins class="adsbygoogle"
      style="display:block"
@@ -456,11 +465,19 @@ def generate_html(all_data, generated_at, briefs=None):
       </ol>
     </section>"""
 
-    # Build tab-nav links
+    # Build tab-nav links. Mobile gets a shorter label where the full title
+    # (e.g. "Top News") would wrap onto two lines at narrow widths.
+    MOBILE_TAB_LABELS = {"news": "Top"}
     tabs_html = ""
     for i, (cat_key, cat_title, _) in enumerate(all_data):
         active = ' class="active"' if i == 0 else ""
-        tabs_html += f'<a href="#"{active} data-cat="{cat_key}">{cat_title}</a>'
+        short = MOBILE_TAB_LABELS.get(cat_key)
+        label = (
+            f'<span class="tab-full">{esc(cat_title)}</span><span class="tab-short">{esc(short)}</span>'
+            if short
+            else esc(cat_title)
+        )
+        tabs_html += f'<a href="#"{active} data-cat="{cat_key}">{label}</a>'
 
     # Build sections for card and list views
     sections = ""
@@ -625,6 +642,7 @@ def generate_html(all_data, generated_at, briefs=None):
       transition: color 0.15s, background 0.15s;
     }}
     .tab-nav a:hover {{ color: #fff; background: rgba(255,255,255,0.15); }}
+    .tab-short {{ display: none; }}
     .tab-nav a.active {{
       color: #fff;
       border-bottom: 2px solid rgba(255,255,255,0.9);
@@ -694,6 +712,9 @@ def generate_html(all_data, generated_at, briefs=None):
       .mobile-credit {{ display: block; }}
       .mobile-podcast {{ display: block; }}
       #logo {{ display: none; }}
+      .tab-full {{ display: none; }}
+      .tab-short {{ display: inline; }}
+      .view-pill {{ display: none !important; }}
     }}
 
     /* ── Pill toggle ── */
@@ -988,7 +1009,7 @@ def generate_html(all_data, generated_at, briefs=None):
     <div class="header-inner">
       <span class="logo" id="logo" style="cursor:pointer">news.coroke.net</span>
       <nav class="tab-nav">{tabs_html}</nav>
-      <a class="podcast-btn" id="podcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">🎧 팟캐스트</a>
+      <a class="podcast-btn" id="podcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">{PODCAST_ICON_SVG} 팟캐스트</a>
       <span class="header-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></span>
       <div class="view-pill">
         <button data-view="card" class="active">카드</button>
@@ -996,7 +1017,7 @@ def generate_html(all_data, generated_at, briefs=None):
       </div>
     </div>
   </header>
-  <div class="mobile-podcast"><a id="mobilePodcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">🎧 팟캐스트 구독하기</a></div>
+  <div class="mobile-podcast"><a id="mobilePodcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">{PODCAST_ICON_SVG} 팟캐스트 구독하기</a></div>
   <div class="mobile-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></div>
   <main>{briefs_html}{sections}
   </main>
@@ -1013,7 +1034,11 @@ def generate_html(all_data, generated_at, briefs=None):
   // it into one, e.g. Spotify).
   var isApple = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) && !window.MSStream;
   if (isApple) {{
-    var podcastHref = '{PODCAST_FEED_URL}'.replace('https://', 'podcast://').replace('http://', 'podcast://');
+    // podcast:// must wrap the ORIGINAL https:// URL, not replace it -- the
+    // Podcasts app reads everything after "podcast://" as the feed URL to
+    // prefill, so stripping the scheme there left it with nothing to parse
+    // and it fell back to an empty "Add Podcast" dialog.
+    var podcastHref = 'podcast://' + '{PODCAST_FEED_URL}';
     document.querySelectorAll('#podcastBtn, #mobilePodcastBtn').forEach(function(a) {{
       a.href = podcastHref;
       // A custom scheme link opened in a new tab (target=_blank) is handled
