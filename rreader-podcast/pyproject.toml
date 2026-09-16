@@ -6,4 +6,8 @@ dependencies = [
     "edge-tts>=6.1.0",
     "mutagen>=1.47.0",
     "pillow>=10.0.0",
+    "numpy>=1.26.0",
+    "scipy>=1.11.0",
+    "pydub>=0.25.1",
+    "audioop-lts>=0.2.0; python_version >= \"3.13\"",
 ]

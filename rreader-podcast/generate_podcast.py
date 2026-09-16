@@ -3,12 +3,17 @@
 rreader-podcast: daily news-briefing podcast generator
 
 Reads the "headline brief" (3 key stories per tab) that rreader-web's
-generate.py already produces and caches at
-../rreader-web/cache/briefs.json, turns it into an announcer-style
-Korean script (Tech -> Top News -> Economy), synthesizes it to MP3 with
-Microsoft Edge's free neural TTS (edge-tts, no API key needed), and
-updates a podcast RSS feed (feed.xml) that Apple Podcasts and Spotify
-can both subscribe to.
+generate.py already produces and caches at ../rreader-web/cache/briefs.json,
+turns it into a script (just the headline sentences, Tech -> Top News ->
+Economy, no filler), synthesizes it at 1.2x speed with Microsoft Edge's
+free neural TTS (edge-tts, no API key needed), mixes it over an original
+synth-beat loop (assets/background.wav, see make_music.py) the way a BBC
+Newsbeat-style bulletin sits over a beat, and updates a podcast RSS feed
+(feed.xml) that Apple Podcasts and Spotify can both subscribe to. Episodes
+older than RETENTION_DAYS are pruned automatically.
+
+Needs ffmpeg on PATH (for pydub's mp3 decode/encode) -- `brew install
+ffmpeg` on macOS, `apt install ffmpeg` on the server.
 
 Run once a day, after rreader-web/run.sh has refreshed briefs.json:
   uv run python generate_podcast.py
@@ -26,7 +31,9 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 import edge_tts
+import numpy as np
 from mutagen.mp3 import MP3
+from pydub import AudioSegment
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -49,7 +56,18 @@ CATEGORY_ORDER = ["tech", "news", "economy"]
 # ko-KR-SunHiNeural: female voice, reads well as a formal news announcer.
 # Other free options: ko-KR-InJoonNeural (male), ko-KR-HyunsuMultilingualNeural (male).
 VOICE = "ko-KR-SunHiNeural"
-RATE = "+0%"  # e.g. "+10%" to speak faster
+RATE = "+20%"  # 1.2x speaking rate (edge-tts's own prosody control, not a post-speedup)
+
+# Background music: a short original synth-beat loop (see make_music.py, no
+# licensing to worry about since we generated it ourselves) tiled under the
+# narration, BBC-Newsbeat-style -- upbeat under a couple of seconds of
+# lead-in/tail, ducked quieter while the narration is actually playing.
+MUSIC_FILE = BASE_DIR / "assets" / "background.wav"
+MUSIC_LEAD_IN_SEC = 2.0
+MUSIC_TAIL_SEC = 3.0
+MUSIC_BASE_DB = -9  # music's own level (music-only sections)
+MUSIC_DUCK_DB = -16  # additional attenuation under the narration
+MUSIC_DUCK_RAMP_SEC = 0.4
 
 PODCAST_TITLE = "news.coroke.net 뉴스 브리핑"
 PODCAST_AUTHOR = "news.coroke.net"
@@ -69,29 +87,21 @@ def build_script(briefs, today):
     """
     Build the script text from today's cached briefs.
 
-    No filler: no "먼저 기술 분야 소식입니다" category transitions, no "첫 번째/두
-    번째" ordinal markers. Just a short greeting, then every headline sentence
-    read back to back in CATEGORY_ORDER (Tech -> Top News -> Economy), then a
-    short sign-off.
+    No filler at all: no opening greeting/date announcement, no "먼저 기술
+    분야 소식입니다" category transitions, no "첫 번째/두 번째" ordinal
+    markers, no closing sign-off. Just every headline sentence read back to
+    back in CATEGORY_ORDER (Tech -> Top News -> Economy). The background
+    music (see mix_with_music()) carries the "show" framing instead.
     """
-    weekday = WEEKDAY_KO[today.weekday()]
-    lines = [f"안녕하세요, {PODCAST_TITLE}입니다. 오늘은 {today.year}년 {today.month}월 {today.day}일 {weekday}요일입니다."]
-
-    has_any = False
+    lines = []
     for cat_key in CATEGORY_ORDER:
         items = (briefs.get(cat_key) or {}).get("items") or []
         for item in items:
             summary = item.get("summary", "").strip()
-            if not summary:
-                continue
-            has_any = True
-            lines.append(summary)
+            if summary:
+                lines.append(summary)
 
-    if not has_any:
-        return None
-
-    lines.append("여기까지 오늘의 뉴스 브리핑이었습니다. 더 자세한 기사는 뉴스 코로케 넷, news.coroke.net 에서 확인하실 수 있습니다. 들어주셔서 감사합니다.")
-    return "\n".join(lines)
+    return "\n".join(lines) if lines else None
 
 
 # ─── TTS ──────────────────────────────────────────────────────────────────────
@@ -100,6 +110,71 @@ def build_script(briefs, today):
 async def synthesize(text, out_path):
     communicate = edge_tts.Communicate(text, voice=VOICE, rate=RATE)
     await communicate.save(str(out_path))
+
+
+# ─── Music mixing ─────────────────────────────────────────────────────────────
+
+
+def _db_to_amp(db):
+    return 10 ** (db / 20)
+
+
+def _segment_to_array(seg):
+    """pydub AudioSegment -> float64 numpy array, shape (n, channels), range [-1, 1]."""
+    arr = np.array(seg.get_array_of_samples(), dtype=np.float64)
+    arr = arr.reshape(-1, seg.channels)
+    return arr / (2 ** (8 * seg.sample_width - 1))
+
+
+def mix_with_music(voice_path, out_path):
+    """
+    Lay the narration over the tiled background loop: a couple of seconds of
+    music alone at the start and end, ducked quieter under the narration
+    itself so every word stays clearly intelligible.
+    """
+    sr = 44100
+    voice = AudioSegment.from_file(voice_path).set_frame_rate(sr).set_channels(2)
+    music = AudioSegment.from_wav(MUSIC_FILE).set_frame_rate(sr).set_channels(2)
+
+    voice_arr = _segment_to_array(voice)
+    music_loop = _segment_to_array(music)
+
+    lead_in = int(MUSIC_LEAD_IN_SEC * sr)
+    tail = int(MUSIC_TAIL_SEC * sr)
+    total_len = lead_in + len(voice_arr) + tail
+
+    reps = int(np.ceil(total_len / len(music_loop)))
+    bed = np.tile(music_loop, (reps, 1))[:total_len] * _db_to_amp(MUSIC_BASE_DB)
+
+    # Duck under the narration, with a short linear ramp in/out so the
+    # volume change isn't an audible jump.
+    ramp = int(MUSIC_DUCK_RAMP_SEC * sr)
+    duck_gain = _db_to_amp(MUSIC_DUCK_DB)
+    env = np.ones(total_len)
+    voice_end = lead_in + len(voice_arr)
+    env[lead_in:voice_end] = duck_gain
+    r0 = max(0, lead_in - ramp)
+    env[r0:lead_in] = np.linspace(1.0, duck_gain, lead_in - r0)
+    r1 = min(total_len, voice_end + ramp)
+    env[voice_end:r1] = np.linspace(duck_gain, 1.0, r1 - voice_end)
+    bed *= env[:, None]
+
+    # Fade the whole episode in/out.
+    fade_in_n = int(0.8 * sr)
+    fade_out_n = int(1.5 * sr)
+    bed[:fade_in_n] *= np.linspace(0, 1, fade_in_n)[:, None]
+    bed[-fade_out_n:] *= np.linspace(1, 0, fade_out_n)[:, None]
+
+    mixed = bed.copy()
+    mixed[lead_in:voice_end] += voice_arr
+
+    peak = np.max(np.abs(mixed))
+    if peak > 0.98:
+        mixed = mixed / peak * 0.98
+
+    pcm = np.clip(mixed * 32767, -32768, 32767).astype(np.int16)
+    out_audio = AudioSegment(pcm.tobytes(), frame_rate=sr, sample_width=2, channels=2)
+    out_audio.export(str(out_path), format="mp3", bitrate="96k")
 
 
 # ─── RSS feed ─────────────────────────────────────────────────────────────────
@@ -219,8 +294,14 @@ def main():
 
     EPISODES_DIR.mkdir(parents=True, exist_ok=True)
     mp3_path = EPISODES_DIR / f"{date_str}.mp3"
+    voice_tmp_path = EPISODES_DIR / f".voice-{date_str}.mp3"
     print(f"Synthesizing with {VOICE}...", end=" ", flush=True)
-    asyncio.run(synthesize(script, mp3_path))
+    asyncio.run(synthesize(script, voice_tmp_path))
+    print("OK")
+
+    print("Mixing with background music...", end=" ", flush=True)
+    mix_with_music(voice_tmp_path, mp3_path)
+    voice_tmp_path.unlink(missing_ok=True)
     print("OK")
 
     audio = MP3(mp3_path)
