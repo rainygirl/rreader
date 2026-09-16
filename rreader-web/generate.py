@@ -1003,17 +1003,24 @@ def generate_html(all_data, generated_at, briefs=None):
   <footer>데이터 소스: 각 매체 공개 RSS / 한국어 번역: Gemini<br><br><a href="https://python.org/" target="_blank" rel="noopener">Powered by Python</a><br>소스코드: <a href="https://github.com/rainygirl/rreader" target="_blank" rel="noopener">github.com/rainygirl/rreader</a><br><br>개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></footer>
   <script>
 (function() {{
-  // On iOS, the podcast:// scheme opens Apple Podcasts straight to this feed
-  // (it just re-reads the same RSS over the podcast:// scheme instead of
-  // https://) so listeners can subscribe without the show needing to be
-  // indexed/searchable in the App Store first. Other platforms just get the
-  // plain feed URL, which the OS/browser can hand off to whichever podcast
-  // app is installed (or the user copies it into one, e.g. Spotify).
-  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-  if (isIOS) {{
+  // On Apple platforms (iOS/iPadOS and macOS), the podcast:// scheme opens
+  // the Podcasts app straight to this feed (it just re-reads the same RSS
+  // over podcast:// instead of https://) so listeners can subscribe without
+  // the show needing to be indexed/searchable in the App Store first. macOS
+  // Catalina+ registers podcast:// for its Podcasts app the same way iOS
+  // does. Other platforms just get the plain feed URL, which the OS/browser
+  // can hand off to whichever podcast app is installed (or the user copies
+  // it into one, e.g. Spotify).
+  var isApple = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) && !window.MSStream;
+  if (isApple) {{
     var podcastHref = '{PODCAST_FEED_URL}'.replace('https://', 'podcast://').replace('http://', 'podcast://');
     document.querySelectorAll('#podcastBtn, #mobilePodcastBtn').forEach(function(a) {{
       a.href = podcastHref;
+      // A custom scheme link opened in a new tab (target=_blank) is handled
+      // inconsistently across browsers -- some never hand it off to the OS.
+      // Navigating the current tab is what reliably triggers the Podcasts
+      // app on both iOS and macOS.
+      a.removeAttribute('target');
     }});
   }}
 
