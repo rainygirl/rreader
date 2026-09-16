@@ -172,10 +172,13 @@ fn save_translation_cache(cache: &HashMap<String, String>) {
     }
 }
 
+const TRANSLATE_MODEL: &str = "gemini-3.1-flash-lite";
+const TRANSLATE_CHUNK_SIZE: usize = 80; // see translate_titles_batch for why
+
 fn call_gemini_api(api_key: &str, prompt: &str) -> Result<String> {
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={}",
-        api_key
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        TRANSLATE_MODEL, api_key
     );
 
     let body = serde_json::json!({
@@ -186,9 +189,12 @@ fn call_gemini_api(api_key: &str, prompt: &str) -> Result<String> {
         }]
     });
 
+    // 80-title chunks normally finish in a few seconds; 60s leaves real
+    // margin without the old 30s figure that a large batch could still blow
+    // through (a 966-title unchunked request took 160s+ in testing).
     let response = ureq::post(&url)
         .set("Content-Type", "application/json")
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(60))
         .send_string(&body.to_string())?;
 
     let resp_text = response.into_string()?;
@@ -208,6 +214,76 @@ fn call_gemini_api(api_key: &str, prompt: &str) -> Result<String> {
     Ok(text)
 }
 
+fn is_korean(s: &str) -> bool {
+    s.chars().any(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c))
+}
+
+/// Translate one chunk of titles. Returns only entries that actually got a
+/// Korean-looking translation back, matched by an explicit idx sent with
+/// each title -- not by re-parsing the title text Gemini echoes back as a
+/// JSON key, which silently breaks for titles some sources format with
+/// non-breaking spaces around punctuation (e.g. Le Monde) even though the
+/// translation itself is correct.
+fn translate_chunk(titles: &[String], api_key: &str) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+
+    let indexed: Vec<_> = titles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| serde_json::json!({"idx": i, "title": t}))
+        .collect();
+    let prompt = format!(
+        "Translate the 'title' in each object of the following JSON array to Korean. \
+         Each title may be in English, French, Japanese, or other languages -- translate all of them to Korean. \
+         Return a JSON array of the same length, each item as {{\"idx\": <idx from input>, \"ko\": \"<Korean translation>\"}}. \
+         Keep idx exactly as given; do not skip, merge, split, or reorder entries. \
+         Respond with ONLY the JSON array, no markdown.\n\n{}",
+        serde_json::Value::Array(indexed)
+    );
+
+    let response_text = match call_gemini_api(api_key, &prompt) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("[rreader] Gemini translation error: {}", e);
+            return result;
+        }
+    };
+
+    let cleaned = response_text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    let arr: Vec<serde_json::Value> = match serde_json::from_str(cleaned) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[rreader] Gemini translation response was not valid JSON: {}", e);
+            return result;
+        }
+    };
+
+    for item in arr {
+        let idx = item.get("idx").and_then(|v| v.as_u64());
+        let ko = item.get("ko").and_then(|v| v.as_str());
+        if let (Some(idx), Some(ko)) = (idx, ko) {
+            if (idx as usize) < titles.len() && is_korean(ko) {
+                result.insert(titles[idx as usize].clone(), ko.to_string());
+            }
+        }
+    }
+
+    result
+}
+
+/// Translate every given title, chunked so a single request stays fast: an
+/// unchunked request for a large category (900+ titles, since the feeds.json
+/// port added many more sources) took 160s+ and silently lost ~10% of
+/// titles -- long-running requests are easy to time out or truncate, and one
+/// malformed response poisons the whole batch. Failing titles are retried
+/// (as a shrinking sub-batch) within this call; anything still unresolved is
+/// simply left out of the cache so the next translation pass tries again.
 fn translate_titles_batch(
     titles: &[String],
     api_key: &str,
@@ -228,34 +304,17 @@ fn translate_titles_batch(
         return result;
     }
 
-    let titles_json = serde_json::json!({ "titles": titles_to_translate });
-    let prompt = format!(
-        "Translate the 'titles' in the following JSON to Korean and return the result as a JSON object where each original title from the input is a key and its Korean translation is the value. For example, for input {{\"titles\": [\"Hello\", \"World\"]}}, the output should be {{\"Hello\": \"안녕하세요\", \"World\": \"세상\"}}. Respond with ONLY the JSON object.\n\nInput:\n{}",
-        titles_json
-    );
-
-    if let Ok(response_text) = call_gemini_api(api_key, &prompt) {
-        let cleaned = response_text
-            .trim()
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim();
-
-        if let Ok(translated_data) = serde_json::from_str::<serde_json::Value>(cleaned) {
-            let dict = if let Some(titles_obj) = translated_data.get("titles") {
-                titles_obj
-            } else {
-                &translated_data
-            };
-
-            if let Some(obj) = dict.as_object() {
-                for (original, translated) in obj {
-                    if let Some(t) = translated.as_str() {
-                        cache.insert(original.clone(), t.to_string());
-                        result.insert(original.clone(), t.to_string());
-                    }
-                }
+    for chunk in titles_to_translate.chunks(TRANSLATE_CHUNK_SIZE) {
+        let mut pending: Vec<String> = chunk.to_vec();
+        for _ in 0..3 {
+            let good = translate_chunk(&pending, api_key);
+            for (original, translated) in &good {
+                cache.insert(original.clone(), translated.clone());
+                result.insert(original.clone(), translated.clone());
+            }
+            pending.retain(|t| !good.contains_key(t));
+            if pending.is_empty() {
+                break;
             }
         }
     }

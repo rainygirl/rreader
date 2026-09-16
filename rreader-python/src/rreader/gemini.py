@@ -8,6 +8,60 @@ import google.genai as genai
 from google.genai import Client
 
 import json
+
+_TRANSLATE_MODEL = "models/gemini-3.1-flash-lite"
+_CHUNK_SIZE = 80  # a single unchunked request for a large category (900+ titles)
+# took 160s+ and silently lost ~10% of titles -- big batches are slow, easy to
+# truncate/time out, and any single malformed response poisons the whole
+# batch. Chunking (same size rreader-web uses) keeps each request fast.
+
+
+def _is_korean(s):
+    """True if s contains at least one Hangul syllable (a real translation should)."""
+    return isinstance(s, str) and any("가" <= c <= "힣" for c in s)
+
+
+def _translate_chunk(titles, api_key):
+    """
+    Translate one chunk of titles. Returns {original_title: translated}, only
+    for titles that actually got a Korean-looking translation back.
+
+    Matched by an explicit idx sent with each title, not by re-parsing the
+    title text Gemini echoes back as a JSON key -- some sources (e.g. Le
+    Monde) use non-breaking spaces around punctuation that Gemini normalizes
+    away when echoing a title, which silently breaks a text-based match even
+    though the translation itself was correct.
+    """
+    try:
+        client = Client(api_key=api_key)
+        indexed = [{"idx": i, "title": t} for i, t in enumerate(titles)]
+        prompt = (
+            "Translate the 'title' in each object of the following JSON array to Korean. "
+            "Each title may be in English, French, Japanese, or other languages -- translate all of them to Korean. "
+            'Return a JSON array of the same length, each item as {"idx": <idx from input>, "ko": "<Korean translation>"}. '
+            "Keep idx exactly as given; do not skip, merge, split, or reorder entries. "
+            "Respond with ONLY the JSON array, no markdown.\n\n" + json.dumps(indexed, ensure_ascii=False)
+        )
+        response = client.models.generate_content(model=_TRANSLATE_MODEL, contents=prompt)
+        cleaned = response.text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        arr = json.loads(cleaned)
+        result = {}
+        for item in arr:
+            try:
+                idx = int(item.get("idx"))
+                ko = str(item.get("ko", "")).strip()
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if 0 <= idx < len(titles) and _is_korean(ko):
+                result[titles[idx]] = ko
+        return result
+    except Exception as e:
+        sys.stderr.write(f"[rreader] Gemini translation error: {e}\n")
+        return {}
+
+
 def translate_titles_batch(titles, api_key, cache):
     """
     Translates a batch of titles to Korean using Gemini, with caching.
@@ -28,33 +82,22 @@ def translate_titles_batch(titles, api_key, cache):
     if not titles_to_translate:
         return result
 
-    try:
-        client = Client(api_key=api_key)
+    chunks = [
+        titles_to_translate[i : i + _CHUNK_SIZE]
+        for i in range(0, len(titles_to_translate), _CHUNK_SIZE)
+    ]
+    for chunk in chunks:
+        pending = chunk
+        for attempt in range(3):
+            good = _translate_chunk(pending, api_key)
+            for original, translated in good.items():
+                cache[original] = translated
+                result[original] = translated
+            pending = [t for t in pending if t not in good]
+            if not pending:
+                break
 
-        prompt_titles_json = json.dumps({"titles": titles_to_translate}, ensure_ascii=False)
-
-        prompt = f"Translate the 'titles' in the following JSON to Korean and return the result as a JSON object where each original title from the input is a key and its Korean translation is the value. For example, for input {{'titles': ['Hello', 'World']}}, the output should be {{'Hello': '안녕하세요', 'World': '세상'}}. Respond with ONLY the JSON object.\\n\\nInput:\\n{prompt_titles_json}"
-
-        response = client.models.generate_content(
-            model='models/gemini-2.5-flash-lite',
-            contents=prompt
-        )
-
-        cleaned_response = response.text.strip().replace("```json", "").replace("```", "").strip()
-        translated_data = json.loads(cleaned_response)
-
-        if "titles" in translated_data and isinstance(translated_data["titles"], dict):
-            translated_dict = translated_data["titles"]
-        else:
-            translated_dict = translated_data
-
-        for original, translated in translated_dict.items():
-            cache[original] = translated
-            result[original] = translated
-
-        return result
-    except Exception as e:
-        return result
+    return result
 
 def summarize_with_gemini(url, api_key):
     """
