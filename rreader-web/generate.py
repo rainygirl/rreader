@@ -1009,7 +1009,7 @@ def generate_html(all_data, generated_at, briefs=None):
     <div class="header-inner">
       <span class="logo" id="logo" style="cursor:pointer">news.coroke.net</span>
       <nav class="tab-nav">{tabs_html}</nav>
-      <a class="podcast-btn" id="podcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">{PODCAST_ICON_SVG} 팟캐스트</a>
+      <a class="podcast-btn" id="podcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener" title="RSS 링크가 복사됩니다. 팟캐스트 앱에서 URL로 추가해보세요.">{PODCAST_ICON_SVG} 팟캐스트</a>
       <span class="header-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></span>
       <div class="view-pill">
         <button data-view="card" class="active">카드</button>
@@ -1017,7 +1017,7 @@ def generate_html(all_data, generated_at, briefs=None):
       </div>
     </div>
   </header>
-  <div class="mobile-podcast"><a id="mobilePodcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">{PODCAST_ICON_SVG} 팟캐스트 구독하기</a></div>
+  <div class="mobile-podcast"><a id="mobilePodcastBtn" href="{PODCAST_FEED_URL}" target="_blank" rel="noopener">{PODCAST_ICON_SVG} 팟캐스트 구독하기<span class="podcast-copy-note" style="display:none"> (링크 복사됨)</span></a></div>
   <div class="mobile-credit">개발: <a href="https://rainygirl.com" target="_blank" rel="noopener">rainygirl.com w/Claude</a></div>
   <main>{briefs_html}{sections}
   </main>
@@ -1025,27 +1025,31 @@ def generate_html(all_data, generated_at, briefs=None):
   <script>
 (function() {{
   // On Apple platforms (iOS/iPadOS and macOS), the podcast:// scheme opens
-  // the Podcasts app straight to this feed (it just re-reads the same RSS
-  // over podcast:// instead of https://) so listeners can subscribe without
-  // the show needing to be indexed/searchable in the App Store first. macOS
-  // Catalina+ registers podcast:// for its Podcasts app the same way iOS
-  // does. Other platforms just get the plain feed URL, which the OS/browser
-  // can hand off to whichever podcast app is installed (or the user copies
-  // it into one, e.g. Spotify).
-  var isApple = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) && !window.MSStream;
-  if (isApple) {{
-    // podcast:// must wrap the ORIGINAL https:// URL, not replace it -- the
-    // Podcasts app reads everything after "podcast://" as the feed URL to
-    // prefill, so stripping the scheme there left it with nothing to parse
-    // and it fell back to an empty "Add Podcast" dialog.
+  // The podcast:// URL-scheme trick (podcast://<original https url>) opens
+  // Apple Podcasts with the feed URL prefilled in "Add by URL" -- confirmed
+  // working on iOS. On macOS's Podcasts app it's an undocumented, unreliable
+  // hack that just opens an EMPTY "Add Podcast" dialog instead (tested on a
+  // real Mac; see the open, unresolved Apple Developer Forums report on
+  // this exact problem -- there's no confirmed-working format there). So:
+  // iOS gets the scheme rewrite, everything else (macOS included) gets the
+  // plain feed link plus a clipboard copy, so pasting it into Podcasts
+  // (File > Add a Show by URL) or any other podcast app always works.
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  if (isIOS) {{
     var podcastHref = 'podcast://' + '{PODCAST_FEED_URL}';
     document.querySelectorAll('#podcastBtn, #mobilePodcastBtn').forEach(function(a) {{
       a.href = podcastHref;
-      // A custom scheme link opened in a new tab (target=_blank) is handled
-      // inconsistently across browsers -- some never hand it off to the OS.
-      // Navigating the current tab is what reliably triggers the Podcasts
-      // app on both iOS and macOS.
       a.removeAttribute('target');
+    }});
+  }} else {{
+    document.querySelectorAll('#podcastBtn, #mobilePodcastBtn').forEach(function(a) {{
+      a.addEventListener('click', function() {{
+        if (navigator.clipboard && navigator.clipboard.writeText) {{
+          navigator.clipboard.writeText('{PODCAST_FEED_URL}').catch(function() {{}});
+        }}
+      }});
+      var mobileNote = a.querySelector('.podcast-copy-note');
+      if (mobileNote) mobileNote.style.display = 'inline';
     }});
   }}
 
