@@ -72,6 +72,12 @@ MUSIC_BASE_DB = -6  # music's own level (music-only sections)
 MUSIC_DUCK_DB = -9  # additional attenuation under the narration (was -16: too quiet to hear at all)
 MUSIC_DUCK_RAMP_SEC = 0.4
 
+# A short "breath" between each headline: the narration pauses and the music
+# swells back up toward its un-ducked level, then dips again for the next
+# line, instead of staying flatly ducked for the whole episode.
+SENTENCE_GAP_SEC = 0.9
+SENTENCE_SWELL_RAMP_SEC = 0.3
+
 PODCAST_TITLE = "news.coroke.net 뉴스 브리핑"
 PODCAST_AUTHOR = "news.coroke.net"
 PODCAST_OWNER_EMAIL = "rainygirl@gmail.com"
@@ -161,12 +167,16 @@ def generate_cover(today, out_path):
 
 def build_script(briefs, today):
     """
-    Build the script text from today's cached briefs.
+    Build the script as a list of lines (one per headline) from today's
+    cached briefs.
 
     No filler: no opening greeting/date announcement, no "먼저 기술 분야
     소식입니다" category transitions, no "첫 번째/두 번째" ordinal markers.
-    Just every headline sentence read back to back in CATEGORY_ORDER
-    (Tech -> Top News -> Economy), then one short sign-off line.
+    Just every headline sentence in CATEGORY_ORDER (Tech -> Top News ->
+    Economy), then one short sign-off line. Kept as a list (not one joined
+    string) because each line is synthesized separately -- see
+    synthesize_lines() -- so a brief musical "breath" can be inserted
+    between headlines instead of reading straight through.
     """
     lines = []
     for cat_key in CATEGORY_ORDER:
@@ -180,7 +190,7 @@ def build_script(briefs, today):
         return None
 
     lines.append(CLOSING_LINE)
-    return "\n".join(lines)
+    return lines
 
 
 # ─── TTS ──────────────────────────────────────────────────────────────────────
@@ -189,6 +199,15 @@ def build_script(briefs, today):
 async def synthesize(text, out_path):
     communicate = edge_tts.Communicate(text, voice=VOICE, rate=RATE)
     await communicate.save(str(out_path))
+
+
+async def synthesize_lines(lines, out_dir):
+    """Synthesize each line to its own mp3 (concurrently), same order as `lines`."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    paths = [out_dir / f"line-{i:02d}.mp3" for i in range(len(lines))]
+    await asyncio.gather(*(synthesize(line, path) for line, path in zip(lines, paths)))
+    return paths
 
 
 # ─── Music mixing ─────────────────────────────────────────────────────────────
@@ -205,37 +224,70 @@ def _segment_to_array(seg):
     return arr / (2 ** (8 * seg.sample_width - 1))
 
 
-def mix_with_music(voice_path, out_path):
+def _load_voice_array(path, sr):
+    seg = AudioSegment.from_file(path).set_frame_rate(sr).set_channels(2)
+    return _segment_to_array(seg)
+
+
+def mix_with_music(voice_paths, out_path):
     """
     Lay the narration over the tiled background loop: a couple of seconds of
-    music alone at the start and end, ducked quieter under the narration
-    itself so every word stays clearly intelligible.
+    music alone at the start and end, ducked quieter under each headline so
+    every word stays clearly intelligible -- and briefly swelling back up
+    during the pause between headlines (SENTENCE_GAP_SEC), like a breath
+    between items in a radio bulletin, instead of staying flatly ducked for
+    the whole episode.
     """
     sr = 44100
-    voice = AudioSegment.from_file(voice_path).set_frame_rate(sr).set_channels(2)
+    segments = [_load_voice_array(p, sr) for p in voice_paths]
     music = AudioSegment.from_wav(MUSIC_FILE).set_frame_rate(sr).set_channels(2)
-
-    voice_arr = _segment_to_array(voice)
     music_loop = _segment_to_array(music)
 
     lead_in = int(MUSIC_LEAD_IN_SEC * sr)
     tail = int(MUSIC_TAIL_SEC * sr)
-    total_len = lead_in + len(voice_arr) + tail
+    gap = int(SENTENCE_GAP_SEC * sr)
+    duck_ramp = int(MUSIC_DUCK_RAMP_SEC * sr)
+    swell_ramp = int(SENTENCE_SWELL_RAMP_SEC * sr)
+    duck_gain = _db_to_amp(MUSIC_DUCK_DB)
+
+    # Lay out each headline's audio with a silent gap after it (the music
+    # fills that gap; see the envelope below), sequentially after the lead-in.
+    positions = []
+    cur = lead_in
+    for i, seg in enumerate(segments):
+        start, end = cur, cur + len(seg)
+        positions.append((start, end))
+        cur = end + (gap if i < len(segments) - 1 else 0)
+    total_len = cur + tail
 
     reps = int(np.ceil(total_len / len(music_loop)))
     bed = np.tile(music_loop, (reps, 1))[:total_len] * _db_to_amp(MUSIC_BASE_DB)
 
-    # Duck under the narration, with a short linear ramp in/out so the
-    # volume change isn't an audible jump.
-    ramp = int(MUSIC_DUCK_RAMP_SEC * sr)
-    duck_gain = _db_to_amp(MUSIC_DUCK_DB)
-    env = np.ones(total_len)
-    voice_end = lead_in + len(voice_arr)
-    env[lead_in:voice_end] = duck_gain
-    r0 = max(0, lead_in - ramp)
-    env[r0:lead_in] = np.linspace(1.0, duck_gain, lead_in - r0)
-    r1 = min(total_len, voice_end + ramp)
-    env[voice_end:r1] = np.linspace(duck_gain, 1.0, r1 - voice_end)
+    voice_full = np.zeros((total_len, 2))
+    for (start, end), seg in zip(positions, segments):
+        voice_full[start:end] = seg
+
+    def ramp(a, b, v0, v1):
+        a, b = max(0, a), min(total_len, b)
+        if b > a:
+            env[a:b] = np.linspace(v0, v1, b - a)
+
+    def hold(a, b, v):
+        a, b = max(0, a), min(total_len, b)
+        if b > a:
+            env[a:b] = v
+
+    env = np.ones(total_len)  # 1.0 = music at its un-ducked, "breathing" level
+    ramp(lead_in - duck_ramp, lead_in, 1.0, duck_gain)
+    for i, (start, end) in enumerate(positions):
+        hold(start, end, duck_gain)
+        is_last = i == len(positions) - 1
+        if is_last:
+            ramp(end, end + duck_ramp, duck_gain, 1.0)
+        else:
+            next_start = positions[i + 1][0]
+            ramp(end, end + swell_ramp, duck_gain, 1.0)
+            ramp(next_start - swell_ramp, next_start, 1.0, duck_gain)
     bed *= env[:, None]
 
     # Fade the whole episode in/out.
@@ -244,8 +296,7 @@ def mix_with_music(voice_path, out_path):
     bed[:fade_in_n] *= np.linspace(0, 1, fade_in_n)[:, None]
     bed[-fade_out_n:] *= np.linspace(1, 0, fade_out_n)[:, None]
 
-    mixed = bed.copy()
-    mixed[lead_in:voice_end] += voice_arr
+    mixed = bed + voice_full
 
     peak = np.max(np.abs(mixed))
     if peak > 0.98:
@@ -383,22 +434,27 @@ def main():
         print(f"[skip] Episode for {date_str} already exists. Use --force to regenerate.")
         return
 
-    script = build_script(briefs, today)
-    if not script:
+    lines = build_script(briefs, today)
+    if not lines:
         sys.exit("[error] No brief items found for any category; nothing to synthesize.")
 
-    print(f"Script ({len(script)} chars):\n{script}\n")
+    print(f"Script ({len(lines)} lines):")
+    for line in lines:
+        print(f"  {line}")
+    print()
 
     EPISODES_DIR.mkdir(parents=True, exist_ok=True)
     mp3_path = EPISODES_DIR / f"{date_str}.mp3"
-    voice_tmp_path = EPISODES_DIR / f".voice-{date_str}.mp3"
-    print(f"Synthesizing with {VOICE}...", end=" ", flush=True)
-    asyncio.run(synthesize(script, voice_tmp_path))
+    voice_tmp_dir = EPISODES_DIR / f".voice-{date_str}"
+    print(f"Synthesizing {len(lines)} lines with {VOICE}...", end=" ", flush=True)
+    voice_paths = asyncio.run(synthesize_lines(lines, voice_tmp_dir))
     print("OK")
 
     print("Mixing with background music...", end=" ", flush=True)
-    mix_with_music(voice_tmp_path, mp3_path)
-    voice_tmp_path.unlink(missing_ok=True)
+    mix_with_music(voice_paths, mp3_path)
+    for p in voice_paths:
+        p.unlink(missing_ok=True)
+    voice_tmp_dir.rmdir()
     print("OK")
 
     audio = MP3(mp3_path)
