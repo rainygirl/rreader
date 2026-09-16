@@ -1,0 +1,21 @@
+// App.rdef -- app signature/version resources, compiled by `rc` and
+// embedded into the binary by `xres` (see the Makefile's `resources`
+// target). `long_info` is what Tracker/Deskbar show as the app's name.
+//
+// This does NOT include an app icon (HVIF vector icons are normally
+// authored visually with Haiku's Icon-O-Matic, not hand-written) -- the
+// app will show a generic default icon until one is added. See README.md.
+
+resource app_signature "application/x-vnd.rainygirl-NewsCoroke";
+
+resource app_version {
+	major = 1,
+	middle = 0,
+	minor = 0,
+	variety = B_APPV_FINAL,
+	internal = 0,
+	short_info = "news.coroke.net",
+	long_info = "news.coroke.net - a native card-view reader for news.coroke.net"
+};
+
+resource app_flags B_SINGLE_LAUNCH;
