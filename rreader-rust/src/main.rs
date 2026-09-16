@@ -11,6 +11,7 @@ use ratatui::{
     style::{Color, Style},
     Frame, Terminal,
 };
+use indexmap::IndexMap;
 use rss::Channel;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -57,7 +58,10 @@ struct FeedCategory {
     show_author: bool,
 }
 
-type FeedsConfig = HashMap<String, FeedCategory>;
+// IndexMap (not HashMap) so category order in the tab bar matches feeds.json's
+// key order (tech -> news -> economy), the same order used across
+// rreader-web and rreader-podcast, instead of being alphabetized.
+type FeedsConfig = IndexMap<String, FeedCategory>;
 
 #[derive(Clone)]
 struct LoadingState {
@@ -449,8 +453,8 @@ impl App {
         let feeds_content = fs::read_to_string(&feeds_path)?;
         let feeds_config: FeedsConfig = serde_json::from_str(&feeds_content)?;
 
-        let mut categories: Vec<String> = feeds_config.keys().cloned().collect();
-        categories.sort();
+        // Preserve feeds.json's key order (IndexMap) instead of alphabetizing.
+        let categories: Vec<String> = feeds_config.keys().cloned().collect();
 
         let category_titles: HashMap<String, String> = feeds_config
             .iter()

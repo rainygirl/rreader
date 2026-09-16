@@ -15,6 +15,7 @@ ureq = { version = "2.9", features = ["native-certs"] }
 # JSON handling
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+indexmap = { version = "2", features = ["serde"] }
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
 # TUI

@@ -3,13 +3,10 @@
         "title": "Tech",
         "feeds": {
             "WIRED AI": "https://www.wired.com/feed/tag/ai/latest/rss",
-            "WIRED Culture": "https://www.wired.com/feed/category/culture/latest/rss",
             "WIRED Gear": "https://www.wired.com/feed/category/gear/latest/rss",
-            "WIRED Ideas": "https://www.wired.com/feed/category/ideas/latest/rss",
             "WIRED Science": "https://www.wired.com/feed/category/science/latest/rss",
             "WIRED Security": "https://www.wired.com/feed/category/security/latest/rss",
             "WIRED Back": "https://www.wired.com/feed/category/backchannel/latest/rss",
-            "WIRED Guides": "https://www.wired.com/feed/tag/wired-guide/latest/rss",
             "WIRED Japan": "https://wired.jp/rssfeeder/",
             "WIRED Italia": "https://www.wired.it/feed/rss",
             "Y Combinator": "https://news.ycombinator.com/rss",
@@ -21,7 +18,26 @@
             "Ars Technica": "https://feeds.arstechnica.com/arstechnica/index",
             "MIT Technology Review": "https://www.technologyreview.com/feed/",
             "Engadget": "https://www.engadget.com/rss.xml",
-            "NHK": "https://news.web.nhk/n-data/conf/na/rss/cat3.xml"
+            "NHK": "https://news.web.nhk/n-data/conf/na/rss/cat3.xml",
+            "Rest of World": "https://restofworld.org/feed/latest/",
+            "The Markup": "https://themarkup.org/feeds/rss.xml",
+            "404 Media": "https://www.404media.co/rss/",
+            "Noema": "https://www.noemamag.com/feed/",
+            "Aeon": "https://aeon.co/feed.rss",
+            "IEEE Spectrum": "https://spectrum.ieee.org/feeds/feed.rss",
+            "Platformer": "https://www.platformer.news/rss/",
+            "Quanta Magazine": "https://api.quantamagazine.org/feed/",
+            "Nautilus": "https://nautil.us/feed/",
+            "Undark": "https://undark.org/feed/",
+            "Nieman Lab": "https://www.niemanlab.org/feed/",
+            "The Conversation": "https://theconversation.com/us/technology/articles.atom",
+            "Slate": "https://slate.com/feeds/technology.rss",
+            "Bloomberg": "https://feeds.bloomberg.com/technology/news.rss",
+            "The Economist": "https://www.economist.com/science-and-technology/rss.xml",
+            "The Register": "https://www.theregister.com/headlines.atom",
+            "Gigazine": "https://gigazine.net/news/rss_2.0/",
+            "Le Monde": "https://www.lemonde.fr/pixels/rss_full.xml",
+            "Der Spiegel": "https://www.spiegel.de/netzwelt/index.rss"
         }
     },
     "news": {
@@ -43,31 +59,18 @@
             "Financial Times": "https://www.ft.com/world?format=rss"
         }
     },
-    "business": {
-        "title": "Business",
+    "economy": {
+        "title": "Economy",
         "feeds": {
-            "Business Insider": "https://markets.businessinsider.com/rss/news",
-            "BBC": "http://feeds.bbci.co.uk/news/business/rss.xml",
-            "WSJ": "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain",
-            "WIRED": "https://www.wired.com/feed/category/business/latest/rss",
-            "Financial Times": "https://www.ft.com/rss/home/international"
+            "Financial Times": "https://www.ft.com/global-economy?format=rss",
+            "The Economist": "https://www.economist.com/finance-and-economics/rss.xml",
+            "Bloomberg": "https://feeds.bloomberg.com/economics/news.rss",
+            "WSJ": "https://feeds.content.dowjones.io/public/rss/socialeconomyfeed",
+            "New York Times": "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",
+            "Project Syndicate": "https://www.project-syndicate.org/rss",
+            "Nikkei Asia": "https://asia.nikkei.com/rss/feed/nar",
+            "SCMP": "https://www.scmp.com/rss/92/feed",
+            "The Diplomat": "https://thediplomat.com/topics/economy/feed/"
         }
-    },
-    "Opinion": {
-        "title": "Opinion",
-        "feeds": {
-            "WSJ": "https://feeds.content.dowjones.io/public/rss/RSSOpinion",
-            "New York Times": "https://rss.nytimes.com/services/xml/rss/nyt/sunday-review.xml",
-            "New Yorker": " https://www.newyorker.com/feed/news/daily-comment"
-        }
-    },
-    "reddit": {
-        "title": "reddit",
-        "feeds": {
-            "Frontpage": "https://www.reddit.com/r/feedly.rss",
-            "News": "https://www.reddit.com/r/news/.rss",
-            "Tech": "https://www.reddit.com/r/tech/.rss"
-        },
-        "show_author": true
     }
 }
