@@ -8,6 +8,8 @@
 
 namespace {
 
+thread_id sFetchThread = -1;
+
 struct FetchJob {
 	BString url;
 	BMessenger target;
@@ -46,5 +48,14 @@ void NewsFetcher::FetchAsync(const BString& url, const BMessenger& target) {
 		delete job;
 		return;
 	}
+	sFetchThread = tid;
 	resume_thread(tid);
+}
+
+void NewsFetcher::Shutdown() {
+	if (sFetchThread >= 0) {
+		status_t result;
+		wait_for_thread(sFetchThread, &result);
+		sFetchThread = -1;
+	}
 }

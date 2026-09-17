@@ -22,6 +22,10 @@ void LoadAsync(const BString& url, const BMessenger& target);
 // Drops queued (not yet started) loads, e.g. when switching tabs.
 void CancelPending();
 
+// Stops and joins the worker threads. Call HttpFetch::AbortAll() first so
+// a worker stuck in a slow download returns promptly.
+void Shutdown();
+
 } // namespace ImageLoader
 
 #endif // NEWS_COROKE_IMAGE_LOADER_H

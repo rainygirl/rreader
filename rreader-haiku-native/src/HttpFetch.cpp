@@ -2,6 +2,7 @@
 
 #include <curl/curl.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -11,6 +12,12 @@ namespace {
 
 const char* kCaBundle = "/boot/system/data/ssl/CARootCertificates.pem";
 
+std::atomic<bool> sAbort{false};
+
+int AbortCheck(void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+	return sAbort.load() ? 1 : 0;
+}
+
 size_t AppendToString(char* data, size_t size, size_t nmemb, void* userp) {
 	static_cast<std::string*>(userp)->append(data, size * nmemb);
 	return size * nmemb;
@@ -18,11 +25,16 @@ size_t AppendToString(char* data, size_t size, size_t nmemb, void* userp) {
 
 // One handle per thread, reused so keep-alive connections and the parsed
 // CA bundle survive between requests (TLS setup is expensive on old CPUs).
+struct ThreadCurl {
+	CURL* handle = curl_easy_init();
+	~ThreadCurl() { curl_easy_cleanup(handle); }
+};
+
 CURL* ThreadHandle() {
-	thread_local CURL* handle = curl_easy_init();
-	if (handle != NULL)
-		curl_easy_reset(handle);
-	return handle;
+	thread_local ThreadCurl curl;
+	if (curl.handle != NULL)
+		curl_easy_reset(curl.handle);
+	return curl.handle;
 }
 
 bool Fetch(const BString& url, std::string* out) {
@@ -40,6 +52,8 @@ bool Fetch(const BString& url, std::string* out) {
 	curl_easy_setopt(curl, CURLOPT_USERAGENT, "news.coroke.net-haiku/1.0");
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, AppendToString);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
+	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+	curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, AbortCheck);
 
 	struct stat st;
 	if (stat(kCaBundle, &st) == 0)
@@ -50,7 +64,7 @@ bool Fetch(const BString& url, std::string* out) {
 	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
 
 	bool ok = res == CURLE_OK && status >= 200 && status < 300 && !out->empty();
-	if (!ok) {
+	if (!ok && !sAbort.load()) {
 		fprintf(stderr, "[http] %s: %s (HTTP %ld)\n", url.String(),
 			curl_easy_strerror(res), status);
 	}
@@ -61,6 +75,14 @@ bool Fetch(const BString& url, std::string* out) {
 
 void HttpFetch::GlobalInit() {
 	curl_global_init(CURL_GLOBAL_ALL);
+}
+
+void HttpFetch::AbortAll() {
+	sAbort = true;
+}
+
+void HttpFetch::GlobalCleanup() {
+	curl_global_cleanup();
 }
 
 bool HttpFetch::GetSync(const BString& url, BString* outBody) {

@@ -11,6 +11,10 @@ namespace HttpFetch {
 
 // Call once from main() before any thread uses GetSync*.
 void GlobalInit();
+// Makes every in-flight and future request fail fast (used when quitting).
+void AbortAll();
+// Call once after every thread that used GetSync* has finished.
+void GlobalCleanup();
 
 // Blocks the calling thread until the request completes. On success,
 // fills `outBody` with the raw response bytes and returns true.

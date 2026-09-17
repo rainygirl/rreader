@@ -10,6 +10,7 @@
 #include <deque>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "HttpFetch.h"
 
@@ -28,6 +29,13 @@ std::mutex sQueueLock;
 std::condition_variable sQueueCond;
 std::deque<LoadJob> sQueue;
 std::once_flag sStartOnce;
+std::vector<std::thread> sWorkers;
+bool sStopping = false;
+
+bool Stopping() {
+	std::lock_guard<std::mutex> lock(sQueueLock);
+	return sStopping;
+}
 
 BBitmap* Decode(uint8* data, size_t size) {
 	BMemoryIO source(data, size);
@@ -54,7 +62,9 @@ void WorkerLoop() {
 		LoadJob job;
 		{
 			std::unique_lock<std::mutex> lock(sQueueLock);
-			sQueueCond.wait(lock, [] { return !sQueue.empty(); });
+			sQueueCond.wait(lock, [] { return sStopping || !sQueue.empty(); });
+			if (sStopping)
+				return;
 			job = sQueue.front();
 			sQueue.pop_front();
 		}
@@ -64,7 +74,7 @@ void WorkerLoop() {
 		uint8* data = NULL;
 		size_t size = 0;
 		BBitmap* bitmap = NULL;
-		if (HttpFetch::GetSyncBinary(job.url, &data, &size))
+		if (HttpFetch::GetSyncBinary(job.url, &data, &size) && !Stopping())
 			bitmap = Decode(data, size);
 		delete[] data;
 		Reply(job, bitmap);
@@ -74,7 +84,7 @@ void WorkerLoop() {
 void StartWorkers() {
 	BTranslatorRoster::Default(); // load translators once, before workers race for it
 	for (int i = 0; i < kWorkerCount; i++)
-		std::thread(WorkerLoop).detach();
+		sWorkers.emplace_back(WorkerLoop);
 }
 
 } // namespace
@@ -90,6 +100,20 @@ void ImageLoader::LoadAsync(const BString& url, const BMessenger& target) {
 		sQueue.push_back(LoadJob{url, target});
 	}
 	sQueueCond.notify_one();
+}
+
+// Workers must be gone before exit() destroys the queue globals and tears
+// down libcurl/OpenSSL; quitting mid-load used to crash in exactly that way.
+void ImageLoader::Shutdown() {
+	{
+		std::lock_guard<std::mutex> lock(sQueueLock);
+		sStopping = true;
+		sQueue.clear();
+	}
+	sQueueCond.notify_all();
+	for (std::thread& worker : sWorkers)
+		worker.join();
+	sWorkers.clear();
 }
 
 void ImageLoader::CancelPending() {

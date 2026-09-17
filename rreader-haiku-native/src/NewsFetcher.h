@@ -1,5 +1,5 @@
 // NewsFetcher.h -- fetches https://news.coroke.net/ on a background thread
-// via Haiku's Network Kit (BUrlRequest) and posts the result back to a
+// (HttpFetch/libcurl) and posts the result back to a
 // target BHandler as a BMessage, so the UI thread never blocks on the
 // network.
 #ifndef NEWS_COROKE_FETCHER_H
@@ -20,6 +20,9 @@ namespace NewsFetcher {
 // once it completes (success or failure). Safe to call from the UI thread;
 // does its own thread management internally.
 void FetchAsync(const BString& url, const BMessenger& target);
+
+// Waits for an in-flight fetch thread to finish (after HttpFetch::AbortAll()).
+void Shutdown();
 
 } // namespace NewsFetcher
 
