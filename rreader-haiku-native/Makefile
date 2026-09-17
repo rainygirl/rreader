@@ -42,15 +42,20 @@ resources:
 	@if command -v rc >/dev/null 2>&1; then \
 		rc -o $(OBJ_DIR)/App.rsrc resources/App.rdef && \
 		xres -o $(TARGET) $(OBJ_DIR)/App.rsrc && \
+		resattr -O -o $(TARGET) $(OBJ_DIR)/App.rsrc && \
 		mimeset -f $(TARGET); \
 	else \
 		echo "[warn] 'rc'/'xres' not found -- skipping resource embedding"; \
 	fi
 
+# Tracker and Deskbar read the icon from attributes, not resources, hence
+# resattr; the Desktop link makes the app launchable from the desktop.
 install: $(TARGET)
 	mkdir -p "$(INSTALL_DIR)"
 	cp $(TARGET) "$(INSTALL_DIR)/news.coroke.net"
+	resattr -O -o "$(INSTALL_DIR)/news.coroke.net" $(OBJ_DIR)/App.rsrc
 	mimeset -f "$(INSTALL_DIR)/news.coroke.net"
+	ln -sfn "$(INSTALL_DIR)/news.coroke.net" /boot/home/Desktop/news.coroke.net
 
 run: all
 	./$(TARGET)
